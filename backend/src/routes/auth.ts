@@ -279,7 +279,8 @@ export async function handleOtpSend(request: Request, env: Env): Promise<Respons
                     "VipTravel - Verification Code",
                     `Your verification code is: ${code}. This code expires in 10 minutes.`,
                     htmlContent,
-                    env.BREVO_API_KEY
+                    env.BREVO_API_KEY,
+                    env
                 );
                 console.log(`[OTP] Email sent to ${identifier} with code ${code}`);
             } catch (emailError: any) {

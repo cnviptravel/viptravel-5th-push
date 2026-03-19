@@ -3,6 +3,7 @@
 import { Env } from '../types/env';
 import { corsHeaders } from '../config/cors';
 import { triggerPusher } from '../services/pusher';
+import { logApiUsage } from '../utils/apiUsageLogger';
 
 /**
  * Get TURN credentials from Metered.ca
@@ -18,6 +19,7 @@ export async function handleGetTurnCredentials(env: Env): Promise<Response> {
             });
         }
         const iceServers = await meteredRes.json();
+        await logApiUsage(env, 'metered_turn', 'turn_credentials', null, 0);
         return new Response(JSON.stringify({ iceServers }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
@@ -52,6 +54,10 @@ export async function handleInitiateCall(request: Request, env: Env, ctx: Execut
 
         // Send real-time notification via Pusher
         ctx.waitUntil(triggerPusher(env, `user-${String(receiverId)}`, "incoming-call", notification));
+
+        await logApiUsage(env, 'pusher_message', 'call_signal', String(senderId), 4);
+        await logApiUsage(env, 'cloudflare_calls', 'video_call_start', String(senderId), 2);
+        await logApiUsage(env, 'metered_turn', 'turn_relay', String(senderId), 0.015);
 
         return new Response(JSON.stringify({ success: true, meetingId }), { 
             headers: { ...corsHeaders, "Content-Type": "application/json" } 

@@ -147,3 +147,18 @@ CREATE TABLE IF NOT EXISTS chat_settings (
   settings TEXT, -- JSON object { wallpaper, font, muted }
   PRIMARY KEY (u1, u2)
 );
+
+-- API Usage Log table
+CREATE TABLE IF NOT EXISTS api_usage_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  api_name TEXT NOT NULL,
+  action TEXT,
+  user_id TEXT,
+  units REAL DEFAULT 1,
+  unit_type TEXT,
+  estimated_cost_usd REAL DEFAULT 0,
+  created_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_api_usage_api_name ON api_usage_log(api_name);
+CREATE INDEX IF NOT EXISTS idx_api_usage_created_at ON api_usage_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_api_usage_user_id ON api_usage_log(user_id);

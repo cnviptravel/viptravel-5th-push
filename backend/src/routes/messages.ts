@@ -3,6 +3,7 @@
 import { Env } from '../types/env';
 import { corsHeaders } from '../config/cors';
 import { triggerPusher } from '../services/pusher';
+import { logApiUsage } from '../utils/apiUsageLogger';
 
 /**
  * Get conversation between two users
@@ -49,6 +50,8 @@ export async function handleSendMessage(request: Request, env: Env, ctx: Executi
     
     const newMessage = await env.DB.prepare("SELECT * FROM messages WHERE id = ?").bind(msgId).first();
     ctx.waitUntil(triggerPusher(env, `user-${m.receiverId}`, "chat-message", newMessage));
+    
+    await logApiUsage(env, 'pusher_message', 'chat_message', String(m.senderId), 1);
     
     return new Response(JSON.stringify(newMessage), { headers: corsHeaders });
 }

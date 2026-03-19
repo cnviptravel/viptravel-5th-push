@@ -2,6 +2,7 @@
 
 import { Env } from '../types/env';
 import { corsHeaders } from '../config/cors';
+import { logApiUsage } from '../utils/apiUsageLogger';
 
 /**
  * Upload a file to R2 bucket
@@ -14,6 +15,10 @@ export async function handleUpload(request: Request, env: Env): Promise<Response
     await env.MY_BUCKET.put(fileName, file, { 
         httpMetadata: { contentType: file.type || "application/octet-stream" } 
     });
+
+    const fileSizeGB = file.size / 1073741824;
+    await logApiUsage(env, 'r2_upload', 'media_upload', null, 1);
+    await logApiUsage(env, 'r2_storage', 'media_stored', null, fileSizeGB);
     
     return new Response(JSON.stringify({ success: true, filename: fileName }), { 
         headers: corsHeaders 

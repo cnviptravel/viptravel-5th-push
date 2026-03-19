@@ -8,7 +8,8 @@ export async function sendEmail(
     subject: string, 
     text: string, 
     html?: string, 
-    apiKey?: string
+    apiKey?: string,
+    env?: any
 ): Promise<boolean> {
     const fromEmail = "auth@cnviptravel.com";
     
@@ -61,6 +62,14 @@ export async function sendEmail(
         }
         
         console.log("[Brevo] Email sent successfully.");
+        
+        if (env) {
+            try {
+                const { logApiUsage } = await import('../utils/apiUsageLogger');
+                await logApiUsage(env, 'brevo_email', 'send_email', null, 1);
+            } catch (_) {}
+        }
+        
         return true;
     } catch (e: any) {
         console.error("[Brevo] Fetch failed:", e);

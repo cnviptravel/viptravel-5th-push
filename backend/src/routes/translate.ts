@@ -4,6 +4,7 @@ import { Env } from '../types/env';
 import { corsHeaders } from '../config/cors';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { triggerPusher } from '../services/pusher';
+import { logApiUsage } from '../utils/apiUsageLogger';
 
 // M2M100 хэлний код mapping
 const m2mLangMap: Record<string, string> = {
@@ -92,6 +93,9 @@ export async function handleTranslate(request: Request, env: Env): Promise<Respo
 
             console.log(`[Translate] Result: "${translatedText.substring(0, 50)}..."`);
 
+            // Log API usage
+            await logApiUsage(env, 'm2m100', 'translate_text', null, 1);
+
             return new Response(JSON.stringify({ translatedText }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
@@ -161,13 +165,22 @@ export async function handleTranslateAudio(request: Request, env: Env): Promise<
         console.log(`[TranslateAudio] Audio buffer size: ${audioBuffer.byteLength} bytes`);
         
         try {
-            const whisperResult = await env.AI.run('@cf/openai/whisper', {
+            const whisperInput: any = {
                 audio: [...new Uint8Array(audioBuffer)],
-            });
+            };
+            // sourceLang өгснөөр Whisper тэр хэлд тохируулж транскрипц хийнэ
+            // mn → монгол текст, en → англи текст, zh → хятад текст
+            if (sourceLang && sourceLang !== 'auto') {
+                whisperInput.language = sourceLang;
+            }
+            const whisperResult = await env.AI.run('@cf/openai/whisper-large-v3-turbo', whisperInput);
             console.log('[TranslateAudio] Whisper API call successful');
 
             const originalText = (whisperResult as any).text || '';
             console.log(`[Whisper] Transcribed: "${originalText.substring(0, 100)}..."`);
+
+            const audioSeconds = audioBuffer.byteLength / 32000;
+            await logApiUsage(env, 'whisper', 'translate_audio', null, audioSeconds);
 
             if (!originalText.trim()) {
                 console.log('[TranslateAudio] No text transcribed from audio');
@@ -177,8 +190,8 @@ export async function handleTranslateAudio(request: Request, env: Env): Promise<
             }
 
             // Step 2: M2M100 — текст → орчуулга
-            const src = m2mLangMap[sourceLang] || 'en';
-            const tgt = m2mLangMap[targetLang] || 'en';
+            const src = m2mLangMap[sourceLang] || sourceLang;
+            const tgt = m2mLangMap[targetLang] || targetLang;
 
             console.log(`[M2M100] Translating from ${src} to ${tgt}, text length: ${originalText.length}`);
 
@@ -193,6 +206,8 @@ export async function handleTranslateAudio(request: Request, env: Env): Promise<
                 const translatedText = (translateResult as any).translated_text || originalText;
 
                 console.log(`[M2M100] Result: "${translatedText.substring(0, 100)}..."`);
+
+                await logApiUsage(env, 'm2m100', 'translate_audio', null, 1);
 
                 return new Response(JSON.stringify({
                     original: originalText,
@@ -257,6 +272,10 @@ export async function handleAiPlan(request: Request, env: Env): Promise<Response
     const response = await result.response;
     const plan = response.text();
 
+    const inputTokens = prompt.length / 4 / 1000;
+    const outputTokens = plan.length / 4 / 1000;
+    await logApiUsage(env, 'gemini_flash', 'ai_plan', null, inputTokens + outputTokens);
+
     return new Response(JSON.stringify({ plan }), { headers: corsHeaders });
 }
 
@@ -268,6 +287,7 @@ export async function handleTranscribe(request: Request, env: Env, ctx: Executio
         const formData = await request.formData();
         const audioFile = formData.get("audio") as File;
         const targetLang = formData.get("targetLang") as string || "en";
+        const sourceLang = formData.get("sourceLang") as string || "en";
         const channel = formData.get("channel") as string;
         const userId = formData.get("userId") as string;
 
@@ -284,9 +304,13 @@ export async function handleTranscribe(request: Request, env: Env, ctx: Executio
         let transcribedText = "";
         
         try {
-            const whisperResult = await env.AI.run("@cf/openai/whisper", {
-                audio: [...new Uint8Array(audioBuffer)]
-            });
+            const whisperInput: any = {
+                audio: [...new Uint8Array(audioBuffer)],
+            };
+            if (sourceLang && sourceLang !== 'auto') {
+                whisperInput.language = sourceLang;
+            }
+            const whisperResult = await env.AI.run('@cf/openai/whisper-large-v3-turbo', whisperInput);
             transcribedText = (whisperResult as any).text || "";
             console.log(`[Transcribe] Whisper result: ${transcribedText.substring(0, 100)}...`);
         } catch (whisperError: any) {
@@ -310,10 +334,11 @@ export async function handleTranscribe(request: Request, env: Env, ctx: Executio
         let translatedText = transcribedText;
         
         try {
-            const tgt = m2mLangMap[targetLang] || 'en';
+            const src = m2mLangMap[sourceLang] || sourceLang;
+            const tgt = m2mLangMap[targetLang] || targetLang;
             const translateResult = await env.AI.run('@cf/meta/m2m100-1.2b', {
                 text: transcribedText,
-                source_lang: 'en', // Whisper usually outputs English
+                source_lang: src,
                 target_lang: tgt,
             });
             translatedText = (translateResult as any).translated_text || transcribedText;

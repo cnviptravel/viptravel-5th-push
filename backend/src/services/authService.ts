@@ -173,7 +173,8 @@ export class AuthService {
                 "VipTravel - Verification Code",
                 `Your verification code is: ${code}. This code expires in 10 minutes.`,
                 htmlContent,
-                this.env.BREVO_API_KEY
+                this.env.BREVO_API_KEY,
+                this.env
             );
             console.log(`[AuthService] Email OTP sent to ${email}`);
         } catch (error: any) {

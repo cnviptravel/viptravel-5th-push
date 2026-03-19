@@ -240,41 +240,38 @@ const Translator: React.FC = () => {
     if (botActiveRef.current) return;
 
     if (topActiveRef.current) {
-      // Зогсоох
-      topActiveRef.current = false;
-      setTopListening(false);
+      // Зөвхөн recorder зогсоо — activeRef-г өөрчлөхгүй
+      // blob resolve болсны дараа activeRef = false болно
       stopRecording();
       return;
     }
 
-    // Эхлүүлэх
     topActiveRef.current = true;
     setTopListening(true);
     setBotResult('');
     setBotOriginal('');
 
-    const blob = await startRecording();
-    if (!blob || !topActiveRef.current) {
-      topActiveRef.current = false;
-      setTopListening(false);
-      return;
-    }
+    const blob = await startRecording(); // дахин дарахад stopRecording() дуудагдаж энд resolve болно
 
     topActiveRef.current = false;
     setTopListening(false);
+
+    // activeRef шалгахгүй — зөвхөн blob шалгана
+    if (!blob || blob.size === 0) return;
 
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
     setBotTranslating(true);
 
     try {
-      // TOP speaks topLang → result shown on BOT side (in botLang)
+      // TOP хүн topLang-аар ярина → botLang руу орчуулж → доод талд гарна
       const { original, translated } = await apiTranslateAudio(blob, topLang, botLang);
       setBotOriginal(original);
       setBotResult(translated);
       if (translated) speak(translated, botLang);
     } catch (e) {
       console.error('Top translation error:', e);
+      showSnackbar('Орчуулга амжилтгүй боллоо.', 'error');
     } finally {
       setBotTranslating(false);
       isProcessingRef.current = false;
@@ -287,41 +284,37 @@ const Translator: React.FC = () => {
     if (topActiveRef.current) return;
 
     if (botActiveRef.current) {
-      // Зогсоох
-      botActiveRef.current = false;
-      setBotListening(false);
+      // Зөвхөн recorder зогсоо — activeRef-г өөрчлөхгүй
       stopRecording();
       return;
     }
 
-    // Эхлүүлэх
     botActiveRef.current = true;
     setBotListening(true);
     setTopResult('');
     setTopOriginal('');
 
     const blob = await startRecording();
-    if (!blob || !botActiveRef.current) {
-      botActiveRef.current = false;
-      setBotListening(false);
-      return;
-    }
 
     botActiveRef.current = false;
     setBotListening(false);
+
+    // activeRef шалгахгүй — зөвхөн blob шалгана
+    if (!blob || blob.size === 0) return;
 
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
     setTopTranslating(true);
 
     try {
-      // BOT speaks botLang → result shown on TOP side (in topLang)
+      // BOT хүн botLang-аар ярина → topLang руу орчуулж → дээд талд гарна
       const { original, translated } = await apiTranslateAudio(blob, botLang, topLang);
       setTopOriginal(original);
       setTopResult(translated);
       if (translated) speak(translated, topLang);
     } catch (e) {
       console.error('Bot translation error:', e);
+      showSnackbar('Орчуулга амжилтгүй боллоо.', 'error');
     } finally {
       setTopTranslating(false);
       isProcessingRef.current = false;

@@ -89,6 +89,8 @@ import {
     handleTranscribe
 } from './routes/translate';
 
+import { handleGetApiUsage, handleGetApiUsageDetail, handleGetApiUsageByDay, handleGetAllBookings } from './routes/admin';
+
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
@@ -256,6 +258,21 @@ export default {
             }
 
             // 5. POSTS, BOOKINGS & REVIEWS ROUTES
+            // Admin API usage routes
+            if (method === "GET" && path === "/admin/api-usage") {
+                return await handleGetApiUsage(request, env);
+            }
+            if (method === "GET" && path === "/admin/api-usage/detail") {
+                return await handleGetApiUsageDetail(request, env);
+            }
+            if (method === "GET" && path === "/admin/api-usage/daily") {
+                return await handleGetApiUsageByDay(request, env);
+            }
+            // Admin all bookings
+            if (method === "GET" && path === "/bookings/all") {
+                return await handleGetAllBookings(request, env);
+            }
+
             if (method === "POST" && path === "/posts") {
                 return handleCreatePost(request, env);
             }
@@ -374,7 +391,9 @@ export default {
                     "GET /posts", "POST /posts", "DELETE /posts/:id", "POST /posts/:id/comment",
                     "POST /follow", "POST /unfollow", "POST /upload", "GET /image/:key",
                     "GET /notifications/:userId", "GET /mapbox-token", "GET /config",
-                    "POST /translate", "POST /transcribe", "POST /ai/plan"
+                    "POST /translate", "POST /transcribe", "POST /ai/plan",
+                    "GET /admin/api-usage", "GET /admin/api-usage/detail", "GET /admin/api-usage/daily",
+                    "GET /bookings/all"
                 ]
             }), { 
                 headers: { ...corsHeaders, "Content-Type": "application/json" } 

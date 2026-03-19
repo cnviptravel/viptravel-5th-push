@@ -369,7 +369,8 @@ export const apiVerifyPhone = async (userId: string, code: string): Promise<User
 // ==================================================================
 export const apiGetAllUsers = async (): Promise<User[]> => {
     const response = await fetch(`${API_URL}/users`);
-    const data = await response.json() as any[];
+    const json = await response.json() as any;
+    const data = Array.isArray(json) ? json : (json.data || json.results || []);
     return data.map(u => parseUserData(u));
 };
 
@@ -386,20 +387,6 @@ export const apiUpdateUserStatus = async (userId: string, status: 'approved' | '
 
     if (!response.ok) {
         throw new Error(`Status update failed: ${response.status}`);
-    }
-};
-
-export const apiDeleteUser = async (userId: string): Promise<void> => {
-    const storedUser = localStorage.getItem('cj_travel_current_user');
-    const currentUser = storedUser ? JSON.parse(storedUser) : null;
-    const adminId = currentUser?._id || '';
-
-    const response = await fetch(`${API_URL}/users/${userId}?userId=${adminId}`, { 
-        method: "DELETE" 
-    });
-
-    if (!response.ok) {
-        throw new Error(`Delete failed: ${response.status}`);
     }
 };
 
@@ -487,8 +474,8 @@ export const apiGetUser = async (userId: string): Promise<User | null> => {
 
 export const apiGetUsersByRole = async (role: UserRole): Promise<User[]> => {
     const response = await fetch(`${API_URL}/users/role/${role}`);
-    const data = await response.json() as any[];
-    // parseUserData ашиглан location JSON-г зөв parse хийнэ
+    const json = await response.json() as any;
+    const data = Array.isArray(json) ? json : (json.data || json.results || []);
     return data.map(u => parseUserData(u));
 };
 
@@ -907,4 +894,47 @@ export const apiUnfollowUser = async (currentUserId: string, targetUserId: strin
         body: JSON.stringify({ currentUserId, targetUserId }),
     });
     return await response.json();
+};
+
+export const apiGetAllBookings = async (): Promise<Booking[]> => {
+    const stored = localStorage.getItem('cj_travel_current_user');
+    const u = stored ? JSON.parse(stored) : null;
+    const res = await fetch(`${API_URL}/bookings/all?userId=${u?._id || ''}`);
+    if (!res.ok) throw new Error('Failed to fetch bookings');
+    const data = await res.json() as any;
+    return (data.data || data) as Booking[];
+};
+
+export const apiGetApiUsage = async (days = 30) => {
+    const stored = localStorage.getItem('cj_travel_current_user');
+    const u = stored ? JSON.parse(stored) : null;
+    const res = await fetch(`${API_URL}/admin/api-usage?days=${days}&userId=${u?._id || ''}`);
+    if (!res.ok) throw new Error('Failed');
+    return await res.json() as any;
+};
+
+export const apiGetApiUsageDetail = async (days = 30, apiName?: string) => {
+    const stored = localStorage.getItem('cj_travel_current_user');
+    const u = stored ? JSON.parse(stored) : null;
+    const p = new URLSearchParams({ days: String(days), userId: u?._id || '' });
+    if (apiName) p.set('api', apiName);
+    const res = await fetch(`${API_URL}/admin/api-usage/detail?${p}`);
+    if (!res.ok) throw new Error('Failed');
+    return await res.json() as any;
+};
+
+export const apiGetApiUsageByDay = async (days = 30) => {
+    const stored = localStorage.getItem('cj_travel_current_user');
+    const u = stored ? JSON.parse(stored) : null;
+    const res = await fetch(`${API_URL}/admin/api-usage/daily?days=${days}&userId=${u?._id || ''}`);
+    if (!res.ok) throw new Error('Failed');
+    return await res.json() as any;
+};
+
+export const apiDeleteUser = async (userId: string): Promise<void> => {
+    const stored = localStorage.getItem('cj_travel_current_user');
+    const currentUser = stored ? JSON.parse(stored) : null;
+    const adminId = currentUser?._id || '';
+    const res = await fetch(`${API_URL}/users/${userId}?userId=${adminId}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 };

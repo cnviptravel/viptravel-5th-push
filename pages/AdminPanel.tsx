@@ -6,6 +6,9 @@ import { User, UserRole } from '../types';
 import { useAppConfig } from '../contexts/AppConfigContext';
 import { useSnackbar } from '../contexts/SnackbarContext';
 import ConfirmModal from '../components/ConfirmModal';
+import AdminDashboard from './AdminDashboard';
+import AdminServiceLog from './AdminServiceLog';
+import AdminApiCosts from './AdminApiCosts';
 
 const AdminPanel: React.FC = () => {
     const navigate = useNavigate();
@@ -15,7 +18,7 @@ const AdminPanel: React.FC = () => {
     const { config, updateConfig } = useAppConfig();
     
     const [users, setUsers] = useState<User[]>([]);
-    const [tab, setTab] = useState<'pending' | 'all' | 'branding'>('pending'); // Branding tab нэмсэн
+    const [tab, setTab] = useState<'pending' | 'all' | 'branding' | 'dashboard' | 'servicelog' | 'apicosts'>('dashboard');
     const [selectedUser, setSelectedUser] = useState<User | null>(null);
     const [confirmDeleteUser, setConfirmDeleteUser] = useState<string | null>(null);
 
@@ -134,6 +137,18 @@ const AdminPanel: React.FC = () => {
             <h1 className="text-2xl font-bold dark:text-white mb-6">Admin Panel</h1>
 
             <div className="flex gap-4 mb-6 border-b border-slate-200 dark:border-slate-800 overflow-x-auto no-scrollbar">
+                <button onClick={() => setTab('dashboard')}
+                  className={`pb-2 font-bold text-sm whitespace-nowrap ${tab==='dashboard'?'text-primary border-b-2 border-primary':'text-slate-400'}`}>
+                  Dashboard
+                </button>
+                <button onClick={() => setTab('servicelog')}
+                  className={`pb-2 font-bold text-sm whitespace-nowrap ${tab==='servicelog'?'text-primary border-b-2 border-primary':'text-slate-400'}`}>
+                  Тооцоо
+                </button>
+                <button onClick={() => setTab('apicosts')}
+                  className={`pb-2 font-bold text-sm whitespace-nowrap ${tab==='apicosts'?'text-primary border-b-2 border-primary':'text-slate-400'}`}>
+                  API Зардал
+                </button>
                 <button 
                     onClick={() => setTab('pending')}
                     className={`pb-2 font-bold text-sm whitespace-nowrap ${tab === 'pending' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}
@@ -338,6 +353,9 @@ const AdminPanel: React.FC = () => {
 
                     </div>
                 )}
+                {tab === 'dashboard' && <AdminDashboard />}
+                {tab === 'servicelog' && <AdminServiceLog />}
+                {tab === 'apicosts' && <AdminApiCosts />}
             </div>
 
             {/* Document Viewer Modal */}
