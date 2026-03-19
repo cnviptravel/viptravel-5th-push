@@ -1,0 +1,23 @@
+name = "viptravel-backend"
+main = "src/index.ts"
+compatibility_date = "2024-11-12"
+compatibility_flags = [ "nodejs_compat" ]
+
+[vars]
+BREVO_API_KEY = "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"
+METERED_API_KEY = "03cfa62a93cdaf6ea6368f6b5d5b68e2027c"
+
+# R2 Bucket Холболт
+[[r2_buckets]]
+binding = "MY_BUCKET"
+bucket_name = "viptravel-bucket"
+
+# D1 Database Холболт
+[[d1_databases]]
+binding = "DB"
+database_name = "viptravel-db"
+database_id = "166283bd-6616-41dc-ad9d-6f7102c8d95c"
+
+# Cloudflare Workers AI Холболт
+[[ai]]
+binding = "AI"

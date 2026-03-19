@@ -1,0 +1,1304 @@
+// VipTravel Backend - FINAL COMPLETE VERSION (Cloudflare Calls & Pusher)
+
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+export interface Env {
+    MY_BUCKET: R2Bucket;
+    DB: D1Database;
+    GEMINI_API_KEY: string;
+    PUSHER_APP_ID: string;
+    PUSHER_KEY: string;
+    PUSHER_SECRET: string;
+    PUSHER_CLUSTER: string;
+    CLOUDFLARE_APP_ID: string;    // Serverless SFU App ID
+    CLOUDFLARE_APP_SECRET: string; // Serverless SFU App Token
+    TELEGRAM_TOKEN: string;
+    BREVO_API_KEY: string;        // Brevo (SendinBlue) API Key
+    MAPBOX_ACCESS_TOKEN: string;  // Mapbox public access token
+    OPENAI_API_KEY: string;       // OpenAI API Key for Whisper and GPT
+}
+
+const corsHeaders = {
+	"Access-Control-Allow-Origin": "*",
+	"Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
+	"Access-Control-Allow-Headers": "Content-Type",
+};
+
+/**
+ * Brevo (SendinBlue) Email Sender
+ */
+async function sendEmail(to: string, subject: string, text: string, html?: string, apiKey?: string) {
+    const fromEmail = "auth@cnviptravel.com";
+    
+    if (!apiKey) {
+        throw new Error("BREVO_API_KEY is not configured. Cannot send email.");
+    }
+
+    const payload: any = {
+        sender: {
+            name: "VipTravel",
+            email: fromEmail
+        },
+        to: [
+            { email: to, name: "User" }
+        ],
+        subject: subject,
+        textContent: text
+    };
+
+    if (html) {
+        payload.htmlContent = html;
+    }
+
+    console.log(`[Brevo] Sending email to ${to} from ${fromEmail}...`);
+
+    try {
+        const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+            method: "POST",
+            headers: {
+                "accept": "application/json",
+                "api-key": apiKey,
+                "content-type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[Brevo] Error ${response.status}:`, errorText);
+            throw new Error(`Brevo Email Error (${response.status}): ${errorText}`);
+        }
+        
+        console.log("[Brevo] Email sent successfully.");
+        return true;
+    } catch (e: any) {
+        console.error("[Brevo] Fetch failed:", e);
+        throw e;
+    }
+}
+
+/**
+ * Pusher Trigger функц
+ */
+async function triggerPusher(env: Env, channel: string, event: string, data: any) {
+	const timestamp = Math.floor(Date.now() / 1000);
+	const body = JSON.stringify({
+		name: event,
+		channels: [channel],
+		data: JSON.stringify(data)
+	});
+
+	const msgUint8 = new TextEncoder().encode(body);
+	const hashBuffer = await crypto.subtle.digest("MD5", msgUint8);
+	const bodyMd5 = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+
+	const queryString = `auth_key=${env.PUSHER_KEY}&auth_timestamp=${timestamp}&auth_version=1.0&body_md5=${bodyMd5}`;
+	const stringToSign = `POST\n/apps/${env.PUSHER_APP_ID}/events\n${queryString}`;
+
+	const encoder = new TextEncoder();
+	const key = await crypto.subtle.importKey("raw", encoder.encode(env.PUSHER_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+	const sigBuffer = await crypto.subtle.sign("HMAC", key, encoder.encode(stringToSign));
+	const signature = Array.from(new Uint8Array(sigBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+
+	const url = `https://api-${env.PUSHER_CLUSTER}.pusher.com/apps/${env.PUSHER_APP_ID}/events?${queryString}&auth_signature=${signature}`;
+
+	return fetch(url, {
+		method: "POST",
+		body: body,
+		headers: { "Content-Type": "application/json" }
+	});
+}
+
+export default {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		const url = new URL(request.url);
+
+		if (request.method === "OPTIONS") {
+			return new Response(null, {
+				status: 200,
+				headers: {
+					...corsHeaders,
+					"Access-Control-Allow-Methods": "GET,HEAD,POST,OPTIONS,PUT,DELETE",
+					"Access-Control-Allow-Headers": "Content-Type,Authorization",
+					"Access-Control-Allow-Origin": "*"
+				}
+			});
+		}
+
+		try {
+			// 1. AUTH & USER MANAGEMENT
+
+if (request.method === "POST" && url.pathname === "/login") {
+    try {
+        const data = await request.json() as any; 
+
+        if (!data.email || !data.password) {
+            return new Response(JSON.stringify({ error: "Email and password required" }), { status: 400, headers: corsHeaders });
+        }
+
+        const r = await env.DB.prepare("SELECT * FROM users WHERE email = ? AND password = ?")
+            .bind(data.email, data.password)
+            .first() as any;
+
+        if (!r) {
+            return new Response(JSON.stringify({ error: "Invalid credentials" }), { status: 401, headers: corsHeaders });
+        }
+
+        // --- Flexible verification logic ---
+        const role = r.role || 'traveler';
+        const emailV = !!r.isEmailVerified;
+        const phoneV = !!r.isPhoneVerified;
+        const eitherVerified = emailV || phoneV;
+        
+        // Admin email check (auto-grant isAdmin on every login)
+        const isAdminEmail = r.email === 'auth@cnviptravel.com';
+        if (isAdminEmail && !r.isAdmin) {
+            await env.DB.prepare("UPDATE users SET isAdmin = 1 WHERE id = ?").bind(r.id).run();
+        }
+        const isAdmin = isAdminEmail ? true : !!r.isAdmin;
+
+        let isVerified = !!r.isVerified;
+        let status = r.status || 'pending';
+
+        if (role === 'traveler') {
+            // Traveler: auto-verify & approve if email OR phone verified
+            if (eitherVerified && !isVerified) {
+                isVerified = true;
+                status = 'approved';
+                await env.DB.prepare("UPDATE users SET isVerified = 1, status = 'approved' WHERE id = ?").bind(r.id).run();
+            }
+        } else if (role === 'guide' || role === 'provider') {
+            // Provider/Guide: isVerified ONLY when admin manually approves (status='approved')
+            if (status === 'approved') {
+                isVerified = true;
+                if (!r.isVerified) {
+                    await env.DB.prepare("UPDATE users SET isVerified = 1 WHERE id = ?").bind(r.id).run();
+                }
+            } else {
+                // Even if they self-verified email/phone, they stay unverified until admin approves
+                isVerified = false;
+            }
+        }
+
+        const o = {
+            _id: String(r.id),
+            name: r.full_name || "Guest",
+            firstName: r.first_name || "",
+            lastName: r.last_name || "",
+            birthDate: r.birth_date || "",
+            referralSource: r.referral_source || "",
+            email: r.email,
+            role: role,
+            phone: r.phone || "",
+            isPhoneVerified: phoneV,
+            isEmailVerified: emailV,
+            isVerified: isVerified,
+            isAdmin: isAdmin,
+            nationality: r.nationality || "Mongolia",
+            privacy: { showEmail: false, showPhone: false, showOnlineStatus: true },
+            blockedUsers: JSON.parse(r.blockedUsers || "[]"),
+            savedPostIds: JSON.parse(r.savedPostIds || "[]"),
+            travelPhotos: typeof r.travelPhotos === "string" ? JSON.parse(r.travelPhotos || "[]") : (r.travelPhotos || []),
+            visitedPlaces: typeof r.visitedPlaces === "string" ? JSON.parse(r.visitedPlaces || "[]") : (r.visitedPlaces || []),
+            languages: typeof r.languages === "string" ? JSON.parse(r.languages || "[]") : (r.languages || []),
+            examResults: typeof r.examResults === "string" ? JSON.parse(r.examResults || "[]") : (r.examResults || []),
+            status: status,
+            profilePic: r.profilePic || "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png",
+            createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+            isOnline: true
+        };
+
+        return new Response(JSON.stringify(o), { 
+            headers: { ...corsHeaders, "Content-Type": "application/json" } 
+        });
+
+    } catch (err: any) {
+        return new Response(JSON.stringify({ error: "Server Error", details: err.message }), { status: 500, headers: corsHeaders });
+    }
+}
+
+if (request.method === "POST" && url.pathname === "/register") {
+    try {
+        const data = await request.json() as any;
+        
+        const exists = await env.DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(data.email).first();
+        if (exists) {
+            return new Response(JSON.stringify({ error: "Email exists" }), { status: 400, headers: corsHeaders });
+        }
+
+        const role = data.role || 'traveler';
+        
+        // Determine verification and status based on role
+        // Traveler: Auto-verified and approved if either email OR phone verified
+        // Provider/Guide: Requires manual admin approval
+        const isEmailVerified = data.isEmailVerified ? 1 : 0;
+        const isPhoneVerified = data.isPhoneVerified ? 1 : 0;
+        
+        // Traveler: isVerified if email OR phone verified → auto-approve
+        // Provider/Guide: isVerified = 0 always at registration (needs admin approval)
+        let isVerified = 0;
+        let status = 'pending';
+        
+        if (role === 'traveler') {
+            isVerified = (isEmailVerified || isPhoneVerified) ? 1 : 0;
+            status = isVerified ? 'approved' : 'pending';
+        } else if (role === 'guide' || role === 'provider') {
+            isVerified = 0; // Always 0 — admin must approve
+            status = 'pending';
+        }
+        
+        // Check if email is admin email
+        const isAdmin = data.email === 'auth@cnviptravel.com' ? 1 : 0;
+        
+        await env.DB.prepare(`
+            INSERT INTO users (
+                full_name, first_name, last_name, birth_date, referral_source, 
+                email, phone, password, role, status, created_at, 
+                isEmailVerified, isPhoneVerified, isVerified, isAdmin
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+            data.full_name || null, 
+            data.first_name || null, 
+            data.last_name || null, 
+            data.birth_date || null, 
+            data.referral_source || null, 
+            data.email, 
+            data.phone || null, 
+            data.password, 
+            role, 
+            status, 
+            Date.now(),
+            isEmailVerified,
+            isPhoneVerified,
+            isVerified,
+            isAdmin
+        ).run();
+
+        // Fetch the newly created user to return full user object
+        const r = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(data.email).first() as any;
+        
+        if (!r) {
+            return new Response(JSON.stringify({ error: "User creation failed" }), { status: 500, headers: corsHeaders });
+        }
+
+        // Return full user object (same format as /login endpoint)
+        const emailV = !!r.isEmailVerified;
+        const phoneV = !!r.isPhoneVerified;
+        
+        const o = {
+            _id: String(r.id),
+            name: r.full_name || "Guest",
+            firstName: r.first_name || "",
+            lastName: r.last_name || "",
+            birthDate: r.birth_date || "",
+            referralSource: r.referral_source || "",
+            email: r.email,
+            role: r.role || 'traveler',
+            phone: r.phone || "",
+            isPhoneVerified: phoneV,
+            isEmailVerified: emailV,
+            isVerified: !!r.isVerified,
+            isAdmin: !!r.isAdmin,
+            nationality: r.nationality || "Mongolia",
+            privacy: { showEmail: false, showPhone: false, showOnlineStatus: true },
+            blockedUsers: JSON.parse(r.blockedUsers || "[]"),
+            savedPostIds: JSON.parse(r.savedPostIds || "[]"),
+            travelPhotos: typeof r.travelPhotos === "string" ? JSON.parse(r.travelPhotos || "[]") : (r.travelPhotos || []),
+            visitedPlaces: typeof r.visitedPlaces === "string" ? JSON.parse(r.visitedPlaces || "[]") : (r.visitedPlaces || []),
+            languages: typeof r.languages === "string" ? JSON.parse(r.languages || "[]") : (r.languages || []),
+            examResults: typeof r.examResults === "string" ? JSON.parse(r.examResults || "[]") : (r.examResults || []),
+            status: r.status || 'pending',
+            profilePic: r.profilePic || "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png",
+            createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+            isOnline: true
+        };
+
+        return new Response(JSON.stringify(o), { 
+            headers: { ...corsHeaders, "Content-Type": "application/json" } 
+        });
+    } catch (err: any) {
+        return new Response(JSON.stringify({ error: "Registration failed", details: err.message }), { status: 500, headers: corsHeaders });
+    }
+}
+			// =========================================================
+			// 1.5. OTP VERIFICATION (Email & Telegram)
+			// =========================================================
+            
+            // 1. Send OTP (or initiate Telegram session)
+            if (request.method === "POST" && url.pathname === "/auth/otp/send") {
+                const { type, identifier } = await request.json() as any; // type: 'email' | 'telegram', identifier: email or phone
+                
+                if (type === 'email') {
+                    const code = Math.floor(100000 + Math.random() * 900000).toString();
+                    await env.DB.prepare("INSERT INTO email_verifications (email, code, createdAt) VALUES (?, ?, ?) ON CONFLICT(email) DO UPDATE SET code=excluded.code, createdAt=excluded.createdAt").bind(identifier, code, Date.now()).run();
+                    
+                    // Send via Brevo
+                    try {
+                        await sendEmail(
+                            identifier, 
+                            "VipTravel Verification Code", 
+                            `Your verification code is: ${code}`,
+                            `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                                <h2 style="color: #1a1a1a;">🔐 Verification Code</h2>
+                                <p>Please use the following code to verify your email address:</p>
+                                <div style="background: #f0f4ff; border-radius: 12px; padding: 20px; text-align: center; margin: 20px 0;">
+                                    <h1 style="color: #2563eb; letter-spacing: 8px; font-size: 36px; margin: 0;">${code}</h1>
+                                </div>
+                                <p style="color: #666;">This code expires in 10 minutes.</p>
+                                <p style="color: #666;">If you didn't request this, you can ignore this email.</p>
+                                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+                                <p style="color: #999; font-size: 12px;">Best regards,<br>VipTravel Team</p>
+                             </div>`,
+                            env.BREVO_API_KEY
+                        );
+                    } catch (e: any) {
+                        console.error("Email send failed:", e);
+                        return new Response(JSON.stringify({ error: e.message || "Failed to send email" }), { status: 500, headers: corsHeaders });
+                    }
+                    
+                    return new Response(JSON.stringify({ success: true, message: "OTP sent to your email" }), { headers: corsHeaders });
+                } 
+                
+                if (type === 'telegram') {
+                    // For Telegram, we generate a session code for the Deep Link
+                    const sessionCode = Math.random().toString(36).substr(2, 8).toUpperCase();
+                    await env.DB.prepare("INSERT INTO telegram_verifications (code, phone, verified, createdAt) VALUES (?, ?, 0, ?)").bind(sessionCode, identifier, Date.now()).run();
+                    return new Response(JSON.stringify({ sessionCode, botUsername: "viptravel_verification_bot" }), { headers: corsHeaders });
+                }
+                
+                return new Response(JSON.stringify({ error: "Invalid type" }), { status: 400, headers: corsHeaders });
+            }
+
+            // 2. Verify OTP
+            if (request.method === "POST" && url.pathname === "/auth/otp/verify") {
+                const { type, identifier, code } = await request.json() as any;
+                
+                if (type === 'email') {
+                    const record: any = await env.DB.prepare("SELECT * FROM email_verifications WHERE email = ?").bind(identifier).first();
+                    if (record && record.code === code) {
+                        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+                    }
+                    return new Response(JSON.stringify({ error: "Invalid code" }), { status: 400, headers: corsHeaders });
+                }
+                
+                if (type === 'telegram') {
+                    // Verify the OTP sent by bot to user
+                    // We need to look up by phone? Or by session code?
+                    // The user enters the OTP in the app.
+                    // We need to find the record associated with this phone (or session) and check the OTP.
+                    // Since the user might not know the session code (it was in the link), 
+                    // we should probably verify by PHONE + OTP.
+                    // But multiple sessions might exist. We take the latest.
+                    
+                    const record: any = await env.DB.prepare("SELECT * FROM telegram_verifications WHERE phone = ? ORDER BY createdAt DESC").bind(identifier).first();
+                    if (record && record.otpCode === code) {
+                        await env.DB.prepare("UPDATE telegram_verifications SET verified = 1 WHERE code = ?").bind(record.code).run();
+                        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+                    }
+                    return new Response(JSON.stringify({ error: "Invalid code" }), { status: 400, headers: corsHeaders });
+                }
+                
+                return new Response(JSON.stringify({ error: "Invalid type" }), { status: 400, headers: corsHeaders });
+            }
+
+            // 3. Telegram Webhook (Modified for OTP)
+            if (request.method === "POST" && url.pathname === "/telegram/webhook") {
+                try {
+                    const update: any = await request.json();
+                    
+                    if (update.message) {
+                        const chatId = update.message.chat.id;
+                        const text = update.message.text;
+                        
+                        // Handle /start SESSION_CODE
+                        if (text && text.startsWith("/start ")) {
+                            const sessionCode = text.split(" ")[1];
+                            const record: any = await env.DB.prepare("SELECT * FROM telegram_verifications WHERE code = ?").bind(sessionCode).first();
+                            
+                            if (record) {
+                                await env.DB.prepare("UPDATE telegram_verifications SET chatId = ? WHERE code = ?").bind(String(chatId), sessionCode).run();
+                                
+                                const reply = {
+                                    chat_id: chatId,
+                                    text: "Welcome to VIP Travel! Please click the button below to share your contact info for verification.",
+                                    reply_markup: {
+                                        keyboard: [[{
+                                            text: "📱 Share Contact",
+                                            request_contact: true
+                                        }]],
+                                        resize_keyboard: true,
+                                        one_time_keyboard: true
+                                    }
+                                };
+                                
+                                await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify(reply)
+                                });
+                            }
+                        }
+                        
+                        // Handle Contact Sharing -> Generate OTP
+                        if (update.message.contact) {
+                            const contact = update.message.contact;
+                            const record: any = await env.DB.prepare("SELECT * FROM telegram_verifications WHERE chatId = ? ORDER BY createdAt DESC").bind(String(chatId)).first();
+                            
+                            if (record) {
+                                const expected = record.phone.replace(/[^0-9]/g, '');
+                                const actual = contact.phone_number.replace(/[^0-9]/g, '');
+                                
+                                if (actual.includes(expected) || expected.includes(actual)) {
+                                    // Generate 6-digit OTP
+                                    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+                                    await env.DB.prepare("UPDATE telegram_verifications SET otpCode = ? WHERE code = ?").bind(otp, record.code).run();
+                                    
+                                    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({
+                                            chat_id: chatId,
+                                            text: `✅ Phone verified! Your code is:\n\n*${otp}*\n\nPlease enter this code in the app.`,
+                                            parse_mode: "Markdown",
+                                            reply_markup: { remove_keyboard: true }
+                                        })
+                                    });
+                                } else {
+                                    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({
+                                            chat_id: chatId,
+                                            text: "❌ Phone number mismatch. Please share the correct contact."
+                                        })
+                                    });
+                                }
+                            } else {
+                                // Debug: Session not found
+                                await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        chat_id: chatId,
+                                        text: "⚠️ Session expired or not found. Please verify via the app again."
+                                    })
+                                });
+                            }
+                        }
+                    }
+                } catch (e: any) {
+                    console.error("Webhook Error:", e);
+                }
+                return new Response("OK");
+            }
+
+			// =========================================================
+			// 2. ADMIN & USER PROFILE
+			// =========================================================
+			if (request.method === "GET" && url.pathname === "/users") {
+				const { results } = await env.DB.prepare("SELECT * FROM users").all();
+				return new Response(JSON.stringify(results), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname.includes("/status")) {
+				const userId = url.pathname.split("/")[2];
+				const { status } = await request.json() as any;
+				await env.DB.prepare("UPDATE users SET status = ? WHERE id = ?").bind(status, userId).run();
+				
+				// When admin approves → also set isVerified = 1
+				// When admin rejects → set isVerified = 0
+				if (status === 'approved') {
+					await env.DB.prepare("UPDATE users SET isVerified = 1 WHERE id = ?").bind(userId).run();
+				} else if (status === 'rejected') {
+					await env.DB.prepare("UPDATE users SET isVerified = 0 WHERE id = ?").bind(userId).run();
+				}
+				
+				// Send notification only for approved/rejected (NOT for pending)
+				if (status === 'approved' || status === 'rejected') {
+					const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+					await env.DB.prepare(`INSERT INTO notifications (id, recipientId, senderId, senderName, type, read, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(notifId, String(userId), 'admin', 'Admin', status, 0, Date.now()).run();
+				}
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			if (request.method === "DELETE" && url.pathname.startsWith("/users/")) {
+				const userId = url.pathname.split("/")[2];
+				await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			if (request.method === "GET" && url.pathname.startsWith("/users/role/")) {
+				const role = url.pathname.split("/")[3];
+				const { results } = await env.DB.prepare("SELECT * FROM users WHERE role = ?").bind(role).all();
+				return new Response(JSON.stringify(results), { headers: corsHeaders });
+			}
+
+			if (request.method === "GET" && url.pathname.startsWith("/users/") && url.pathname.split("/").length === 3) {
+				const userId = url.pathname.split("/")[2];
+				if (userId === "block" || userId === "unblock") return new Response(null, {status: 404});
+
+				const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+				if (!user) return new Response(JSON.stringify({ error: "User not found" }), { status: 404, headers: corsHeaders });
+				const followers = await env.DB.prepare("SELECT followerId FROM follows WHERE followingId = ?").bind(userId).all();
+				const following = await env.DB.prepare("SELECT followingId FROM follows WHERE followerId = ?").bind(userId).all();
+				const reviews = await env.DB.prepare("SELECT * FROM reviews WHERE providerId = ? ORDER BY createdAt DESC").bind(userId).all();
+				return new Response(JSON.stringify({ ...user, followers: followers.results.map(r => r.followerId), following: following.results.map(r => r.followingId), reviews: reviews.results }), { headers: corsHeaders });
+			}
+
+			if (request.method === "PUT" && url.pathname.startsWith("/users/")) {
+				const userId = url.pathname.split("/")[2];
+				const u = await request.json() as any;
+				// Partial update: only update fields that are provided
+				const existing: any = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+				if (!existing) return new Response(JSON.stringify({ error: "User not found" }), { status: 404, headers: corsHeaders });
+				const name = u.name || u.full_name || existing.full_name;
+				const phone = u.phone !== undefined ? u.phone : existing.phone;
+				const profilePic = u.profilePic !== undefined ? u.profilePic : existing.profilePic;
+				const bio = u.bio !== undefined ? u.bio : existing.bio;
+				const nationality = u.nationality !== undefined ? u.nationality : existing.nationality;
+				const experience = u.experience !== undefined ? u.experience : existing.experience;
+				const serviceDescription = u.serviceDescription !== undefined ? u.serviceDescription : existing.serviceDescription;
+				const visitedPlaces = u.visitedPlaces !== undefined ? (Array.isArray(u.visitedPlaces) ? JSON.stringify(u.visitedPlaces) : u.visitedPlaces) : existing.visitedPlaces;
+				const languages = u.languages !== undefined ? (Array.isArray(u.languages) ? JSON.stringify(u.languages) : u.languages) : existing.languages;
+				const guidingLocations = u.guidingLocations !== undefined ? (Array.isArray(u.guidingLocations) ? JSON.stringify(u.guidingLocations) : u.guidingLocations) : existing.guidingLocations;
+				const verificationData = u.verificationData !== undefined ? JSON.stringify(u.verificationData) : existing.verificationData;
+				const examResults = u.examResults !== undefined ? JSON.stringify(u.examResults) : existing.examResults;
+				const coverPhoto = u.coverPhoto !== undefined ? u.coverPhoto : existing.coverPhoto;
+                const isPhoneVerified = u.isPhoneVerified !== undefined ? (u.isPhoneVerified ? 1 : 0) : existing.isPhoneVerified;
+				const location = u.location !== undefined ? JSON.stringify(u.location) : existing.location;
+				await env.DB.prepare(`UPDATE users SET full_name=?, phone=?, profilePic=?, bio=?, nationality=?, experience=?, serviceDescription=?, visitedPlaces=?, languages=?, guidingLocations=?, verificationData=?, examResults=?, coverPhoto=?, isPhoneVerified=?, location=? WHERE id=?`).bind(name, phone, profilePic, bio, nationality, experience, serviceDescription, visitedPlaces, languages, guidingLocations, verificationData, examResults, coverPhoto, isPhoneVerified, location, userId).run();
+				const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+				// Also update userName and userPic in all posts by this user
+				if (name || profilePic) {
+					await env.DB.prepare("UPDATE posts SET userName = ?, userPic = ? WHERE CAST(userId AS TEXT) = CAST(? AS TEXT)").bind(name, profilePic, userId).run();
+				}
+				// Also update userName in comments across all posts
+				if (name) {
+					const { results: allPosts } = await env.DB.prepare("SELECT id, comments FROM posts").all();
+					for (const p of allPosts as any[]) {
+						try {
+							const comments = JSON.parse(p.comments || '[]');
+							let changed = false;
+							for (const c of comments) {
+								if (String(c.userId) === String(userId) && c.userName !== name) {
+									c.userName = name;
+									changed = true;
+								}
+							}
+							if (changed) {
+								await env.DB.prepare("UPDATE posts SET comments = ? WHERE id = ?").bind(JSON.stringify(comments), p.id).run();
+							}
+						} catch (e) {}
+					}
+				}
+				return new Response(JSON.stringify(updated), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname.endsWith("/photos")) {
+				const userId = url.pathname.split("/")[2];
+				const { photoUrl } = await request.json() as any;
+				const user: any = await env.DB.prepare("SELECT travelPhotos FROM users WHERE id = ?").bind(userId).first();
+				let photos = JSON.parse(user.travelPhotos || '[]');
+				photos = [photoUrl, ...photos];
+				await env.DB.prepare("UPDATE users SET travelPhotos = ? WHERE id = ?").bind(JSON.stringify(photos), userId).run();
+				const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+				return new Response(JSON.stringify(updated), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname.endsWith("/photos/delete")) {
+				const userId = url.pathname.split("/")[2];
+				const { photoUrl } = await request.json() as any;
+				const user: any = await env.DB.prepare("SELECT travelPhotos FROM users WHERE id = ?").bind(userId).first();
+				let photos = JSON.parse(user.travelPhotos || '[]');
+				photos = photos.filter((p: string) => p !== photoUrl);
+				await env.DB.prepare("UPDATE users SET travelPhotos = ? WHERE id = ?").bind(JSON.stringify(photos), userId).run();
+				const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+				return new Response(JSON.stringify(updated), { headers: corsHeaders });
+			}
+
+			// ---------------------------------------------------------
+			// 3. BLOCKING & CHAT SETTINGS
+			// ---------------------------------------------------------
+			if (request.method === "POST" && url.pathname === "/users/block") {
+				const { currentUserId, targetUserId } = await request.json() as any;
+				const user: any = await env.DB.prepare("SELECT blockedUsers FROM users WHERE id = ?").bind(currentUserId).first();
+				let blocked = JSON.parse(user.blockedUsers || '[]');
+				if (!blocked.includes(targetUserId)) blocked.push(targetUserId);
+				await env.DB.prepare("UPDATE users SET blockedUsers = ? WHERE id = ?").bind(JSON.stringify(blocked), currentUserId).run();
+				const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(currentUserId).first();
+				return new Response(JSON.stringify(updated), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname === "/users/unblock") {
+				const { currentUserId, targetUserId } = await request.json() as any;
+				const user: any = await env.DB.prepare("SELECT blockedUsers FROM users WHERE id = ?").bind(currentUserId).first();
+				let blocked = JSON.parse(user.blockedUsers || '[]');
+				blocked = blocked.filter((id: string) => id !== targetUserId);
+				await env.DB.prepare("UPDATE users SET blockedUsers = ? WHERE id = ?").bind(JSON.stringify(blocked), currentUserId).run();
+				const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(currentUserId).first();
+				return new Response(JSON.stringify(updated), { headers: corsHeaders });
+			}
+
+			// ---------------------------------------------------------
+			// ХОЁР ХҮНИЙ ХООРОНДОХ ЧАТ ТАТАХ (GET /messages/:u1/:u2)
+			// ---------------------------------------------------------
+			if (request.method === "GET" && url.pathname.startsWith("/messages/")) {
+				const parts = url.pathname.split("/");
+				if (parts.length === 4 && parts[1] === "messages") {
+					try {
+						const u1 = String(parts[2]);
+						const u2 = String(parts[3]);
+						const { results } = await env.DB.prepare(`
+							SELECT * FROM messages 
+							WHERE (CAST(senderId AS TEXT) = ? AND CAST(receiverId AS TEXT) = ?)
+							   OR (CAST(senderId AS TEXT) = ? AND CAST(receiverId AS TEXT) = ?)
+							ORDER BY createdAt ASC
+						`).bind(u1, u2, u2, u1).all();
+						return new Response(JSON.stringify(results), { 
+							headers: { ...corsHeaders, "Content-Type": "application/json" } 
+						});
+					} catch (e: any) {
+						return new Response(JSON.stringify([]), { headers: corsHeaders });
+					}
+				}
+			}
+
+			if (request.method === "POST" && url.pathname === "/chat/settings") {
+				const { currentUserId, targetUserId, settings } = await request.json() as any;
+				await env.DB.prepare("INSERT INTO chat_settings (u1, u2, settings) VALUES (?, ?, ?) ON CONFLICT(u1, u2) DO UPDATE SET settings = excluded.settings").bind(currentUserId, targetUserId, JSON.stringify(settings)).run();
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			// ---------------------------------------------------------
+			// 4. CHAT SYSTEM & MESSAGES
+			// ---------------------------------------------------------
+			if (request.method === "POST" && url.pathname === "/messages") {
+				const m = await request.json() as any;
+				const msgId = `msg_${Date.now()}`;
+				await env.DB.prepare(`INSERT INTO messages (id, senderId, receiverId, text, media, mediaType, fileName, createdAt, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`).bind(msgId, String(m.senderId), String(m.receiverId), m.text || null, m.media || null, m.mediaType || null, m.fileName || null, Date.now()).run();
+				const newMessage = await env.DB.prepare("SELECT * FROM messages WHERE id = ?").bind(msgId).first();
+				ctx.waitUntil(triggerPusher(env, `user-${m.receiverId}`, "chat-message", newMessage));
+				return new Response(JSON.stringify(newMessage), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname === "/messages/read") {
+				const { currentUserId, senderId } = await request.json() as any;
+				await env.DB.prepare("UPDATE messages SET read = 1 WHERE CAST(receiverId AS TEXT) = CAST(? AS TEXT) AND CAST(senderId AS TEXT) = CAST(? AS TEXT)").bind(currentUserId, senderId).run();
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			// DELETE single message
+			if (request.method === "DELETE" && url.pathname.startsWith("/messages/") && !url.pathname.includes("/call")) {
+				const msgId = decodeURIComponent(url.pathname.split("/")[2]);
+				await env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(msgId).run();
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			// DELETE entire conversation between two users
+			if (request.method === "DELETE" && url.pathname.startsWith("/conversations/")) {
+				const parts = url.pathname.split("/");
+				const u1 = parts[2];
+				const u2 = parts[3];
+				await env.DB.prepare(`DELETE FROM messages WHERE (CAST(senderId AS TEXT) = ? AND CAST(receiverId AS TEXT) = ?) OR (CAST(senderId AS TEXT) = ? AND CAST(receiverId AS TEXT) = ?)`).bind(u1, u2, u2, u1).run();
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			if (request.method === "GET" && url.pathname.startsWith("/messages/unread/count/")) {
+				const userId = url.pathname.split("/")[4];
+				const res: any = await env.DB.prepare(`SELECT COUNT(DISTINCT senderId) as count FROM messages WHERE CAST(receiverId AS TEXT) = CAST(? AS TEXT) AND read = 0`).bind(userId).first();
+				return new Response(JSON.stringify(res), { headers: corsHeaders });
+			}
+
+			// =========================================================
+			// 5. CLOUDFLARE CALLS (SFU) - ЗАСВАРЛАСАН ХЭСЭГ ✅
+			// =========================================================
+			if (request.method === "POST" && url.pathname === "/messages/call") {
+				try {
+					const { senderId, receiverId, type, senderName, senderPic } = await request.json() as any;
+
+					// meetingId нь зөвхөн Pusher signaling-д хэрэглэгдэнэ.
+					// Frontend WebRTC session-г өөрөө Cloudflare-аас авдаг тул
+					// энд Cloudflare API дуудах шаардлагагүй.
+					const meetingId = crypto.randomUUID();
+
+					const callId = `call_${Date.now()}`;
+					const notification = { 
+						id: callId, 
+						recipientId: String(receiverId), 
+						senderId: String(senderId), 
+						senderName, 
+						senderPic: senderPic || '',
+						type: type === 'video' ? 'video_call' : 'voice_call', 
+						meetingId,
+						createdAt: Date.now() 
+					};
+
+					// Notification DB-д хадгалахгүй — зөвхөн Pusher real-time дохио
+					ctx.waitUntil(triggerPusher(env, `user-${String(receiverId)}`, "incoming-call", notification));
+
+					return new Response(JSON.stringify({ success: true, meetingId }), { 
+						headers: { ...corsHeaders, "Content-Type": "application/json" } 
+					});
+
+				} catch (e: any) {
+					return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+				}
+			}
+
+			// Дуудлага авсан дохио — caller-т шууд мэдэгдэнэ
+			if (request.method === "POST" && url.pathname === "/messages/call/accepted") {
+				try {
+					const { callerId } = await request.json() as any;
+					ctx.waitUntil(triggerPusher(env, `user-${String(callerId)}`, "call-accepted", { ts: Date.now() }));
+					return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+				} catch (e: any) {
+					return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+				}
+			}
+
+			// Track мэдээллийг нөгөө хүнд Pusher-ээр дамжуулах ✅
+			if (request.method === "POST" && url.pathname === "/messages/call/tracks") {
+				try {
+					const { receiverId, meetingId, senderSessionId, trackIds } = await request.json() as any;
+					ctx.waitUntil(triggerPusher(env, `user-${String(receiverId)}`, "call-tracks", {
+						meetingId,
+						senderSessionId,
+						trackIds
+					}));
+					return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+				} catch (e: any) {
+					return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+				}
+			}
+
+			// Call дуусгах/татгалзах дохио + чатын түүхэнд бичих
+			if (request.method === "POST" && url.pathname === "/messages/call/end") {
+				try {
+					const { notifyUserId, callerId, receiverId, callType, duration, answered } = await request.json() as any;
+					ctx.waitUntil(triggerPusher(env, `user-${String(notifyUserId)}`, "call-ended", { ts: Date.now() }));
+					
+					// Дуудлагын бүртгэлийг чатны мессеж болгон хадгалах
+					if (callerId && receiverId) {
+						const msgId = `calllog_${Date.now()}`;
+						let text: string;
+						if (answered && duration > 0) {
+							text = `CALL_LOG:${callType.toUpperCase()}:${duration}`;
+						} else {
+							text = `CALL_LOG:${callType.toUpperCase()}:MISSED`;
+						}
+						await env.DB.prepare(
+							`INSERT INTO messages (id, senderId, receiverId, text, media, mediaType, fileName, createdAt, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`
+						).bind(msgId, String(callerId), String(receiverId), text, null, 'call_log', null, Date.now()).run();
+					}
+					
+					return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+				} catch (e: any) {
+					return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+				}
+			}
+
+			// =========================================================
+			// 6. CLOUDFLARE CALLS PROXY (WebRTC SDP солилцоо) - ЗАСВАРЛАСАН ✅
+			// =========================================================
+			if ((request.method === "POST" || request.method === "PUT") && url.pathname.startsWith("/calls/")) {
+				try {
+					const parts = url.pathname.split("/");
+
+					let targetUrl: string;
+					const baseUrl = `https://rtc.live.cloudflare.com/v1/apps/${env.CLOUDFLARE_APP_ID}`;
+
+					if (parts[2] === "sessions" && parts[3] === "new") {
+						targetUrl = `${baseUrl}/sessions/new`;
+					} else if (parts[3] === "tracks" && parts[4] === "new") {
+						targetUrl = `${baseUrl}/sessions/${parts[2]}/tracks/new`;
+					} else if (parts[3] === "renegotiate") {
+						targetUrl = `${baseUrl}/sessions/${parts[2]}/renegotiate`;
+					} else {
+						return new Response(JSON.stringify({ error: "Буруу endpoint" }), { status: 400, headers: corsHeaders });
+					}
+
+					// Body-г текст хэлбэрээр унших — parse алдаагаас сэргийлэх
+					const bodyText = await request.text();
+					const body = bodyText ? JSON.parse(bodyText) : {};
+
+					const cfRes = await fetch(targetUrl, {
+						method: parts[3] === "renegotiate" ? 'PUT' : 'POST',
+						headers: { 
+							'Authorization': `Bearer ${env.CLOUDFLARE_APP_SECRET}`,
+							'Content-Type': 'application/json'
+						},
+						body: JSON.stringify(body)
+					});
+
+					const resData = await cfRes.json();
+					return new Response(JSON.stringify(resData), { 
+						headers: { ...corsHeaders, "Content-Type": "application/json" } 
+					});
+
+				} catch (e: any) {
+					return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+				}
+			}
+
+			// ---------------------------------------------------------
+			// ЧАТНЫ ЖАГСААЛТ (Conversations)
+			// ---------------------------------------------------------
+			if (request.method === "GET" && url.pathname.startsWith("/conversations/")) {
+				try {
+					const myId = String(url.pathname.split("/")[2]);
+					const { results: rawConvs } = await env.DB.prepare(`
+						SELECT DISTINCT partner_id FROM (
+							SELECT receiverId as partner_id FROM messages WHERE CAST(senderId AS TEXT) = ?
+							UNION
+							SELECT senderId as partner_id FROM messages WHERE CAST(receiverId AS TEXT) = ?
+							UNION
+							SELECT recipientId as partner_id FROM notifications WHERE CAST(senderId AS TEXT) = ?
+							UNION
+							SELECT senderId as partner_id FROM notifications WHERE CAST(recipientId AS TEXT) = ?
+						) WHERE partner_id IS NOT NULL AND partner_id != ''
+					`).bind(myId, myId, myId, myId).all();
+
+					const partnerPromises = (rawConvs || []).map(async (row: any) => {
+						const pId = String(row.partner_id);
+						if (pId === myId) return null;
+
+						// Run these 3 queries in parallel for EACH partner
+						const [user, lastMsg, unread] = await Promise.all([
+							env.DB.prepare("SELECT full_name, profilePic FROM users WHERE CAST(id AS TEXT) = ?").bind(pId).first(),
+							env.DB.prepare(`
+								SELECT text, createdAt FROM messages 
+								WHERE (CAST(senderId AS TEXT) = ? AND CAST(receiverId AS TEXT) = ?)
+								   OR (CAST(senderId AS TEXT) = ? AND CAST(receiverId AS TEXT) = ?)
+								ORDER BY createdAt DESC LIMIT 1
+							`).bind(myId, pId, pId, myId).first(),
+							env.DB.prepare(`
+								SELECT COUNT(*) as count FROM messages 
+								WHERE CAST(receiverId AS TEXT) = ? AND CAST(senderId AS TEXT) = ? AND read = 0
+							`).bind(myId, pId).first()
+						]) as [any, any, any];
+
+						return {
+							userId: pId,
+							userName: user?.full_name || "User " + pId.substr(0, 4),
+							userPic: user?.profilePic || 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
+							lastMessage: lastMsg?.text || "CALL_LOG:VOICE:MISSED",
+							lastMessageTime: lastMsg?.createdAt || Date.now(),
+							unreadCount: unread?.count || 0
+						};
+					});
+
+					const finalResults = (await Promise.all(partnerPromises)).filter(r => r !== null) as any[];
+					finalResults.sort((a, b) => b.lastMessageTime - a.lastMessageTime);
+
+					return new Response(JSON.stringify(finalResults), { 
+						headers: { ...corsHeaders, "Content-Type": "application/json" } 
+					});
+				} catch (e: any) {
+					return new Response(JSON.stringify([]), { headers: corsHeaders });
+				}
+			}
+
+			// =========================================================
+			// 7. POSTS, SOCIAL & OTHERS
+			// =========================================================
+			if (request.method === "POST" && url.pathname === "/posts") {
+				const body = await request.json() as any;
+				// Check if user is pending (guide/provider must be approved)
+				if (body.userId) {
+					const poster: any = await env.DB.prepare("SELECT status, role FROM users WHERE CAST(id AS TEXT) = ?").bind(String(body.userId)).first();
+					if (poster && (poster.role === 'guide' || poster.role === 'provider') && poster.status !== 'approved') {
+						return new Response(JSON.stringify({ error: "Your account is pending approval. You cannot create posts yet." }), { status: 403, headers: corsHeaders });
+					}
+				}
+				const postId = `post_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+				await env.DB.prepare(`INSERT INTO posts (id, userId, userName, userPic, userRole, text, image, video, type, serviceTitle, price, capacity, created_at, likes, comments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(postId, body.userId, body.userName, body.userPic, body.userRole, body.text, body.image || null, body.video || null, body.type || 'regular', body.serviceTitle || null, body.price || null, body.capacity || null, Date.now(), '[]', '[]').run();
+				return new Response(JSON.stringify({ success: true, postId, _id: postId }), { headers: corsHeaders });
+			}
+
+			if (request.method === "GET" && url.pathname === "/posts") {
+				const { results } = await env.DB.prepare("SELECT p.*, u.full_name AS live_userName, u.profilePic AS live_userPic FROM posts p LEFT JOIN users u ON CAST(p.userId AS TEXT) = CAST(u.id AS TEXT) ORDER BY p.created_at DESC").all();
+				const posts = results.map((p: any) => {
+					const liveUserName = p.live_userName || p.userName;
+					const liveUserPic = p.live_userPic || p.userPic;
+					let comments = JSON.parse(p.comments || '[]');
+					return { ...p, _id: p.id, createdAt: p.created_at, userName: liveUserName, userPic: liveUserPic, likes: JSON.parse(p.likes || '[]'), comments };
+				});
+				return new Response(JSON.stringify(posts), { headers: corsHeaders });
+			}
+
+			// DELETE /posts/:id
+			if (request.method === "DELETE" && url.pathname.startsWith("/posts/")) {
+				const postId = decodeURIComponent(url.pathname.split("/")[2]);
+				await env.DB.prepare("DELETE FROM posts WHERE id = ?").bind(postId).run();
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			// POST /posts/:id/comment
+			if (request.method === "POST" && url.pathname.match(/^\/posts\/[^/]+\/comment$/)) {
+				const postId = decodeURIComponent(url.pathname.split("/")[2]);
+				const { userId, userName, text } = await request.json() as any;
+				const post: any = await env.DB.prepare("SELECT * FROM posts WHERE id = ?").bind(postId).first();
+				if (!post) return new Response(JSON.stringify({ error: "Post not found" }), { status: 404, headers: corsHeaders });
+				// Always use live user name from DB
+				const commenter: any = await env.DB.prepare("SELECT full_name FROM users WHERE CAST(id AS TEXT) = ?").bind(String(userId)).first();
+				const liveUserName = commenter?.full_name || userName;
+				const comments = JSON.parse(post.comments || '[]');
+				comments.push({ id: `cmt_${Date.now()}`, userId, userName: liveUserName, text, createdAt: new Date().toISOString() });
+				await env.DB.prepare("UPDATE posts SET comments = ? WHERE id = ?").bind(JSON.stringify(comments), postId).run();
+				
+				// Send notification to post owner (if commenter is not the owner)
+				if (post.userId && String(post.userId) !== String(userId)) {
+					const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+					await env.DB.prepare(`INSERT INTO notifications (id, recipientId, senderId, senderName, type, postId, read, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(notifId, String(post.userId), String(userId), userName, 'comment', postId, 0, Date.now()).run();
+				}
+				
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			// POST /posts/saved - get saved posts by IDs
+			if (request.method === "POST" && url.pathname === "/posts/saved") {
+				const { postIds } = await request.json() as any;
+				if (!postIds || !postIds.length) return new Response(JSON.stringify([]), { headers: corsHeaders });
+				const placeholders = postIds.map(() => '?').join(',');
+				const { results } = await env.DB.prepare(`SELECT p.*, u.full_name AS live_userName, u.profilePic AS live_userPic FROM posts p LEFT JOIN users u ON CAST(p.userId AS TEXT) = CAST(u.id AS TEXT) WHERE p.id IN (${placeholders}) ORDER BY p.created_at DESC`).bind(...postIds).all();
+				const posts = results.map((p: any) => ({ ...p, _id: p.id, createdAt: p.created_at, userName: p.live_userName || p.userName, userPic: p.live_userPic || p.userPic, likes: JSON.parse(p.likes || '[]'), comments: JSON.parse(p.comments || '[]') }));
+				return new Response(JSON.stringify(posts), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname.endsWith("/like")) {
+				const postId = url.pathname.split("/")[2];
+				const { userId } = await request.json() as any;
+				const post: any = await env.DB.prepare("SELECT * FROM posts WHERE id = ?").bind(postId).first();
+				if (!post) return new Response(JSON.stringify({ error: "Post not found" }), { status: 404, headers: corsHeaders });
+				let likes = JSON.parse(post.likes || '[]');
+				const wasLiked = likes.includes(userId);
+				likes = wasLiked ? likes.filter((id: string) => id !== userId) : [...likes, userId];
+				await env.DB.prepare("UPDATE posts SET likes = ? WHERE id = ?").bind(JSON.stringify(likes), postId).run();
+				
+				// Send like notification (only when liking, not unliking, and not own post)
+				if (!wasLiked && post.userId && String(post.userId) !== String(userId)) {
+					const user: any = await env.DB.prepare("SELECT full_name FROM users WHERE CAST(id AS TEXT) = ?").bind(String(userId)).first();
+					const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+					await env.DB.prepare(`INSERT INTO notifications (id, recipientId, senderId, senderName, type, postId, read, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(notifId, String(post.userId), String(userId), user?.full_name || 'User', 'like', postId, 0, Date.now()).run();
+				}
+				
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname.endsWith("/save-post")) {
+				const userId = url.pathname.split("/")[2];
+				const { postId } = await request.json() as any;
+				const user: any = await env.DB.prepare("SELECT savedPostIds FROM users WHERE id = ?").bind(userId).first();
+				let saved = JSON.parse(user.savedPostIds || '[]');
+				if (saved.includes(postId)) saved = saved.filter((id: string) => id !== postId);
+				else saved.push(postId);
+				await env.DB.prepare("UPDATE users SET savedPostIds = ? WHERE id = ?").bind(JSON.stringify(saved), userId).run();
+				const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+				return new Response(JSON.stringify(updated), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname === "/bookings") {
+				const b = await request.json() as any;
+				// Check if provider is approved before accepting bookings
+				const providerUser: any = await env.DB.prepare("SELECT status, role FROM users WHERE CAST(id AS TEXT) = ?").bind(String(b.providerId)).first();
+				if (providerUser && (providerUser.role === 'guide' || providerUser.role === 'provider') && providerUser.status !== 'approved') {
+					return new Response(JSON.stringify({ error: "This provider is not yet approved to accept bookings." }), { status: 403, headers: corsHeaders });
+				}
+				const id = `book_${Date.now()}`;
+				await env.DB.prepare(`INSERT INTO bookings (id, providerId, providerName, customerId, serviceTitle, postId, date, guests, totalPrice, status, paymentMethod, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, b.providerId, b.providerName, b.customerId, b.serviceTitle || null, b.postId || null, b.date, b.guests, b.totalPrice, 'confirmed', b.paymentMethod, Date.now()).run();
+				
+				// Update bookingCount in the corresponding post if postId exists
+				if (b.postId) {
+					await env.DB.prepare("UPDATE posts SET bookingCount = IFNULL(bookingCount, 0) + 1 WHERE id = ?").bind(b.postId).run();
+				}
+
+				return new Response(JSON.stringify({ success: true, id }), { headers: corsHeaders });
+			}
+
+			if (request.method === "GET" && url.pathname.startsWith("/bookings/")) {
+				const userId = url.pathname.split("/")[2];
+				const { results } = await env.DB.prepare("SELECT * FROM bookings WHERE customerId = ? OR providerId = ? ORDER BY createdAt DESC").bind(userId, userId).all();
+				return new Response(JSON.stringify(results), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname.startsWith("/reviews/")) {
+				const providerId = url.pathname.split("/")[2];
+				const r = await request.json() as any;
+				await env.DB.prepare(`INSERT INTO reviews (id, providerId, reviewerId, reviewerName, reviewerPic, rating, comment, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(`rev_${Date.now()}`, providerId, r.reviewerId, r.reviewerName, r.reviewerPic, r.rating, r.comment || null, Date.now()).run();
+				// Send review notification to the provider
+				if (String(providerId) !== String(r.reviewerId)) {
+					const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+					await env.DB.prepare(`INSERT INTO notifications (id, recipientId, senderId, senderName, type, read, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(notifId, String(providerId), String(r.reviewerId), r.reviewerName || 'User', 'review', 0, Date.now()).run();
+				}
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname === "/follow") {
+				const { currentUserId, targetUserId } = await request.json() as any;
+				await env.DB.prepare("INSERT INTO follows (followerId, followingId, created_at) VALUES (?, ?, ?)").bind(currentUserId, targetUserId, Date.now()).run();
+				// Send follow notification
+				if (String(currentUserId) !== String(targetUserId)) {
+					const follower: any = await env.DB.prepare("SELECT full_name FROM users WHERE CAST(id AS TEXT) = ?").bind(String(currentUserId)).first();
+					const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+					await env.DB.prepare(`INSERT INTO notifications (id, recipientId, senderId, senderName, type, read, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(notifId, String(targetUserId), String(currentUserId), follower?.full_name || 'User', 'follow', 0, Date.now()).run();
+				}
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname === "/unfollow") {
+				const { currentUserId, targetUserId } = await request.json() as any;
+				await env.DB.prepare("DELETE FROM follows WHERE followerId = ? AND followingId = ?").bind(currentUserId, targetUserId).run();
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			// =========================================================
+			// MAPBOX TOKEN ENDPOINT
+			// =========================================================
+			if (request.method === "GET" && url.pathname === "/mapbox-token") {
+				const token = env.MAPBOX_ACCESS_TOKEN || '';
+				if (!token) {
+					return new Response(JSON.stringify({ error: "MAPBOX_ACCESS_TOKEN not configured" }), { status: 500, headers: corsHeaders });
+				}
+				return new Response(JSON.stringify({ token }), { 
+					headers: { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" } 
+				});
+			}
+
+			if (url.pathname === "/config") {
+				if (request.method === "GET") {
+					const config = await env.DB.prepare("SELECT * FROM AppConfig WHERE id = 1").first();
+					return new Response(JSON.stringify(config || { appName: 'VIP Travel' }), { headers: corsHeaders });
+				}
+				if (request.method === "POST") {
+					const c = await request.json() as any;
+					await env.DB.prepare("INSERT INTO AppConfig (id, appName, logoUrl, loginLogoUrl, loginNameImageUrl, appNameImageUrl) VALUES (1, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET appName=excluded.appName, logoUrl=excluded.logoUrl, loginLogoUrl=excluded.loginLogoUrl, loginNameImageUrl=excluded.loginNameImageUrl, appNameImageUrl=excluded.appNameImageUrl").bind(c.appName, c.logoUrl, c.loginLogoUrl, c.loginNameImageUrl, c.appNameImageUrl).run();
+					return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+				}
+			}
+
+			if (request.method === "POST" && url.pathname === "/translate") {
+				const { text, sourceLang, targetLang } = await request.json() as any;
+				if (!env.GEMINI_API_KEY) {
+					return new Response(JSON.stringify({ error: "Gemini API key not configured" }), { status: 500, headers: corsHeaders });
+				}
+				
+				const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+				const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+				
+				const prompt = sourceLang 
+					? `Translate the following text from ${sourceLang} to ${targetLang}. Only return the translated text: "${text}"`
+					: `Translate: "${text}" to ${targetLang}. Only return the translated text.`;
+
+				const result = await model.generateContent(prompt);
+				const response = await result.response;
+				const translatedText = response.text();
+				
+				return new Response(JSON.stringify({ translatedText }), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname === "/ai/plan") {
+				const { destination, duration, budget, language } = await request.json() as any;
+				if (!env.GEMINI_API_KEY) {
+					return new Response(JSON.stringify({ error: "Gemini API key not configured" }), { status: 500, headers: corsHeaders });
+				}
+
+				const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+				const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+
+				const prompt = `Act as a professional travel planner. Plan a ${duration}-day trip to ${destination}. 
+				Budget level: ${budget}. 
+				Provide a detailed day-by-day itinerary including places to visit, things to do, and estimated costs.
+				Response MUST be in ${language} language.`;
+
+				const result = await model.generateContent(prompt);
+				const response = await result.response;
+				const plan = response.text();
+
+				return new Response(JSON.stringify({ plan }), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname === "/upload") {
+				const formData = await request.formData();
+				const file = formData.get("file") as File;
+				const fileName = `${Date.now()}-${file.name}`;
+				await env.MY_BUCKET.put(fileName, file, { httpMetadata: { contentType: file.type || "application/octet-stream" } });
+				return new Response(JSON.stringify({ success: true, filename: fileName }), { headers: corsHeaders });
+			}
+
+			if (request.method === "GET" && url.pathname.startsWith("/image/")) {
+				const key = decodeURIComponent(url.pathname.replace('/image/', ''));
+				const object = await env.MY_BUCKET.get(key);
+				if (!object) return new Response("Not found", { status: 404 });
+				const headers = new Headers();
+				object.writeHttpMetadata(headers);
+				headers.set("Access-Control-Allow-Origin", "*");
+				const ct = object.httpMetadata?.contentType || "application/octet-stream";
+				headers.set("Content-Type", ct);
+				headers.set("Accept-Ranges", "bytes");
+				headers.set("Cache-Control", "public, max-age=31536000");
+				return new Response(object.body, { headers });
+			}
+
+			if (request.method === "GET" && url.pathname.startsWith("/notifications/")) {
+				const userId = url.pathname.split("/")[2];
+				const { results } = await env.DB.prepare("SELECT * FROM notifications WHERE recipientId = ? AND type NOT LIKE '%call%' ORDER BY createdAt DESC LIMIT 50").bind(userId).all();
+				return new Response(JSON.stringify(results.map(n => ({ ...n, read: !!n.read }))), { headers: corsHeaders });
+			}
+
+			if (request.method === "POST" && url.pathname.match(/^\/notifications\/[^/]+\/read$/)) {
+				const userId = url.pathname.split("/")[2];
+				await env.DB.prepare("UPDATE notifications SET read = 1 WHERE recipientId = ?").bind(userId).run();
+				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+			}
+
+			// =========================================================
+			// AUDIO TRANSCRIPTION & TRANSLATION ENDPOINT (IMPROVED VERSION)
+			// =========================================================
+			if (request.method === "POST" && url.pathname === "/transcribe") {
+				try {
+					const formData = await request.formData();
+					const audioFile = formData.get("audio") as File;
+					const targetLang = formData.get("targetLang") as string || "en";
+					const channel = formData.get("channel") as string;
+					const userId = formData.get("userId") as string;
+
+					if (!audioFile) {
+						return new Response(JSON.stringify({ error: "Audio file is required" }), { status: 400, headers: corsHeaders });
+					}
+
+					console.log(`[Transcribe] Processing audio: ${audioFile.name}, size: ${audioFile.size}, type: ${audioFile.type}`);
+
+					// Step 1: Convert audio file to base64 for Cloudflare AI
+					const audioBuffer = await audioFile.arrayBuffer();
+					const audioBase64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+
+					// Step 2: Transcribe audio using Cloudflare AI model @cf/openai/whisper
+					// Cloudflare AI requires a Cloudflare API token, not the APP_SECRET
+					// We'll use the OPENAI_API_KEY as fallback or try direct Cloudflare AI
+					let transcribedText = "";
+					
+					// Try Cloudflare AI first
+					try {
+						// For Cloudflare AI, we need a Cloudflare API token with AI access
+						// Using the same token as for Workers AI
+						const cfAiToken = env.CLOUDFLARE_APP_SECRET || env.OPENAI_API_KEY;
+						const cfAiResponse = await fetch("https://api.cloudflare.com/client/v4/accounts/self/ai/run/@cf/openai/whisper", {
+							method: "POST",
+							headers: {
+								"Authorization": `Bearer ${cfAiToken}`,
+								"Content-Type": "application/json"
+							},
+							body: JSON.stringify({
+								audio: audioBase64
+							})
+						});
+
+						if (cfAiResponse.ok) {
+							const cfAiResult = await cfAiResponse.json() as any;
+							transcribedText = cfAiResult.result?.text || "";
+							console.log(`[Transcribe] Cloudflare AI Transcription: ${transcribedText.substring(0, 100)}...`);
+						} else {
+							console.warn(`[Cloudflare AI] Failed: ${cfAiResponse.status}`);
+							// Fallback to OpenAI Whisper if available
+							if (env.OPENAI_API_KEY) {
+								const openaiResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+									method: "POST",
+									headers: {
+										"Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+										"Content-Type": "application/json"
+									},
+									body: JSON.stringify({
+										file: audioBase64,
+										model: "whisper-1",
+										response_format: "json"
+									})
+								});
+								
+								if (openaiResponse.ok) {
+									const openaiResult = await openaiResponse.json() as any;
+									transcribedText = openaiResult.text || "";
+									console.log(`[Transcribe] OpenAI Whisper Transcription: ${transcribedText.substring(0, 100)}...`);
+								}
+							}
+						}
+					} catch (aiError) {
+						console.error("[Transcribe] AI transcription error:", aiError);
+					}
+
+					// If no transcription was obtained, return error
+					if (!transcribedText) {
+						return new Response(JSON.stringify({ 
+							error: "Failed to transcribe audio. Please check AI service configuration.",
+							note: "Check Cloudflare AI token or OpenAI API key configuration"
+						}), { status: 500, headers: corsHeaders });
+					}
+
+					// Step 3: Translate text using available services
+					let translatedText = transcribedText;
+					
+					// Try Gemini API first (already configured in the backend)
+					if (env.GEMINI_API_KEY) {
+						try {
+							const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+							const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+							
+							const prompt = `Translate the following text to ${targetLang}. Only return the translated text: "${transcribedText}"`;
+							
+							const result = await model.generateContent(prompt);
+							const response = await result.response;
+							translatedText = response.text();
+							console.log(`[Transcribe] Gemini Translation: ${translatedText.substring(0, 100)}...`);
+						} catch (geminiError) {
+							console.warn("[Transcribe] Gemini translation failed:", geminiError);
+							// Fallback to simple translation
+							translatedText = `[${targetLang.toUpperCase()}] ${transcribedText}`;
+						}
+					} else {
+						// Simple fallback translation
+						translatedText = `[${targetLang.toUpperCase()}] ${transcribedText}`;
+					}
+
+					// Step 4: Send to Pusher if channel and userId provided
+					if (channel && userId) {
+						const subtitleData = {
+							original: transcribedText,
+							translated: translatedText,
+							timestamp: Date.now(),
+							userId: userId,
+							language: targetLang
+						};
+
+						ctx.waitUntil(triggerPusher(env, channel, "subtitle-update", subtitleData));
+					}
+
+					return new Response(JSON.stringify({
+						success: true,
+						transcribed: transcribedText,
+						translated: translatedText,
+						language: targetLang,
+						note: "Using Cloudflare AI/OpenAI Whisper for transcription and Gemini for translation"
+					}), {
+						headers: { ...corsHeaders, "Content-Type": "application/json" }
+					});
+
+				} catch (e: any) {
+					console.error("[Transcribe] Error:", e);
+					return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+				}
+			}
+
+			return new Response(JSON.stringify({ 
+				message: "VipTravel Backend Live!",
+				path: url.pathname 
+			}), { 
+				headers: { ...corsHeaders, "Content-Type": "application/json" } 
+			});
+
+		} catch (e: any) {
+			return new Response(JSON.stringify({ error: e.message }), { 
+				status: 500, 
+				headers: { ...corsHeaders, "Content-Type": "application/json" } 
+			});
+		}
+	},
+};

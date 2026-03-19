@@ -1,0 +1,51 @@
+
+/* Mapbox GL CSS - Must be imported first */
+@import 'mapbox-gl/dist/mapbox-gl.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-display bg-background-light text-slate-900;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dark body {
+    @apply bg-background-dark text-white;
+  }
+  
+  /* Global cleanup for buttons to remove ugly browser outlines */
+  button:focus, 
+  button:active, 
+  div:focus {
+    @apply outline-none ring-0;
+    outline: none !important;
+  }
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.filled-icon {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+    display: none !important;
+}
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+    -ms-overflow-style: none !important;  /* IE and Edge */
+    scrollbar-width: none !important;  /* Firefox */
+}
+
+/* Apply to all scrollable elements globally */
+* {
+    scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+    display: none;
+}

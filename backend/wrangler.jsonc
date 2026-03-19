@@ -1,0 +1,27 @@
+{
+  "name": "viptravel-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-02-16",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  // R2 Bucket Холболт
+  "r2_buckets": [
+    {
+      "binding": "MY_BUCKET",
+      "bucket_name": "viptravel-bucket"
+    }
+  ],
+  // D1 Database Холболт
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "viptravel-db",
+      "database_id": "166283bd-6616-41dc-ad9d-6f7102c8d95c"
+    }
+  ],
+  // Cloudflare Workers AI Холболт
+  "ai": {
+    "binding": "AI"
+  }
+}

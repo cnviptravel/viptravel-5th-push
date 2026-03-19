@@ -1,0 +1,8 @@
+{
+  "name": "VIP TRAVEL",
+  "description": "A comprehensive travel application connecting travelers, guides, and providers with a unified social feed and booking system.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
