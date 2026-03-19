@@ -34,6 +34,10 @@ export async function handleGetImage(key: string, env: Env): Promise<Response> {
         return new Response("Not found", { status: 404 });
     }
     
+    // R2 download log
+    const fileSizeGB = (object.size || 0) / 1073741824;
+    await logApiUsage(env, 'r2_download', 'image_view', null, fileSizeGB || 0.000001);
+    
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set("Access-Control-Allow-Origin", "*");

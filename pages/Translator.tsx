@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { apiTranslateAudio } from '../services/api';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useSnackbar } from '../contexts/SnackbarContext';
 
@@ -151,9 +150,7 @@ const Translator: React.FC = () => {
   const [langSearch, setLangSearch] = useState('');
 
   // Refs
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<any>(null);
   const topActiveRef = useRef(false);
   const botActiveRef = useRef(false);
   const isProcessingRef = useRef(false);
@@ -168,70 +165,43 @@ const Translator: React.FC = () => {
     window.speechSynthesis.speak(utt);
   };
 
-  // ── Recording helpers ─────────────────────────────────
-  const stopStream = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-  };
+  const API_BASE = 'https://viptravel-backend.erdneebatulzii23.workers.dev';
 
-  const startRecording = async (): Promise<Blob | null> => {
-    return new Promise(async (resolve) => {
-      try {
-        console.log('Translator: Requesting microphone permission...');
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            sampleRate: 16000,
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-          }
-        });
-        console.log('Translator: Microphone permission granted, stream:', stream.id);
-        streamRef.current = stream;
+  // Утасны Web Speech API ашиглан текст авах
+  const startSpeechRecognition = (lang: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (!SR) { reject(new Error('not supported')); return; }
 
-        // Supported mime type шалгах
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : 'audio/mp4';
-        
-        console.log('Translator: Using mimeType:', mimeType);
+      const r = new SR();
+      r.lang = langSpeechCode[lang] || lang;
+      r.interimResults = false;
+      r.maxAlternatives = 1;
+      r.continuous = false;
+      recognitionRef.current = r;
 
-        const recorder = new MediaRecorder(stream, { mimeType });
-        mediaRecorderRef.current = recorder;
-        audioChunksRef.current = [];
-
-        recorder.ondataavailable = (e) => {
-          console.log('Translator: Audio data available, size:', e.data.size);
-          if (e.data.size > 0) audioChunksRef.current.push(e.data);
-        };
-
-        recorder.onstop = () => {
-          console.log('Translator: Recording stopped, chunks:', audioChunksRef.current.length);
-          const blob = new Blob(audioChunksRef.current, { type: mimeType });
-          console.log('Translator: Created blob, size:', blob.size, 'type:', blob.type);
-          stopStream();
-          resolve(blob);
-        };
-
-        console.log('Translator: Starting recording...');
-        recorder.start();
-        console.log('Translator: Recording started, state:', recorder.state);
-      } catch (err) {
-        console.error('Translator: Mic error:', err);
-        showSnackbar('Микрофонд хандах эрх шаардлагатай. Browser settings-ээс микрофон эрх олгоно уу.', 'warning');
-        resolve(null);
-      }
+      r.onresult = (e: any) => resolve(e.results[0][0].transcript || '');
+      r.onerror = (e: any) => reject(new Error(e.error));
+      r.onend = () => { recognitionRef.current = null; };
+      r.start();
     });
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current?.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
+  const stopSpeechRecognition = () => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+  };
+
+  // Backend /translate-text дуудах
+  const translateText = async (text: string, src: string, tgt: string): Promise<string> => {
+    const res = await fetch(`${API_BASE}/translate-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, sourceLang: src, targetLang: tgt }),
+    });
+    if (!res.ok) throw new Error('Translation failed');
+    const data = await res.json() as any;
+    return data.translated || text;
   };
 
   // ── TOP person mic toggle ─────────────────────────────
@@ -240,9 +210,9 @@ const Translator: React.FC = () => {
     if (botActiveRef.current) return;
 
     if (topActiveRef.current) {
-      // Зөвхөн recorder зогсоо — activeRef-г өөрчлөхгүй
-      // blob resolve болсны дараа activeRef = false болно
-      stopRecording();
+      stopSpeechRecognition();
+      topActiveRef.current = false;
+      setTopListening(false);
       return;
     }
 
@@ -251,30 +221,29 @@ const Translator: React.FC = () => {
     setBotResult('');
     setBotOriginal('');
 
-    const blob = await startRecording(); // дахин дарахад stopRecording() дуудагдаж энд resolve болно
-
-    topActiveRef.current = false;
-    setTopListening(false);
-
-    // activeRef шалгахгүй — зөвхөн blob шалгана
-    if (!blob || blob.size === 0) return;
-
-    if (isProcessingRef.current) return;
-    isProcessingRef.current = true;
-    setBotTranslating(true);
-
     try {
-      // TOP хүн topLang-аар ярина → botLang руу орчуулж → доод талд гарна
-      const { original, translated } = await apiTranslateAudio(blob, topLang, botLang);
-      setBotOriginal(original);
-      setBotResult(translated);
-      if (translated) speak(translated, botLang);
-    } catch (e) {
-      console.error('Top translation error:', e);
-      showSnackbar('Орчуулга амжилтгүй боллоо.', 'error');
-    } finally {
-      setBotTranslating(false);
-      isProcessingRef.current = false;
+      const transcript = await startSpeechRecognition(topLang);
+      topActiveRef.current = false;
+      setTopListening(false);
+      if (!transcript.trim() || isProcessingRef.current) return;
+
+      isProcessingRef.current = true;
+      setBotTranslating(true);
+      try {
+        const translated = await translateText(transcript, topLang, botLang);
+        setBotOriginal(transcript);
+        setBotResult(translated);
+        if (translated) speak(translated, botLang);
+      } catch {
+        showSnackbar('Орчуулга амжилтгүй боллоо.', 'error');
+      } finally {
+        setBotTranslating(false);
+        isProcessingRef.current = false;
+      }
+    } catch {
+      topActiveRef.current = false;
+      setTopListening(false);
+      showSnackbar('Микрофон алдаа гарлаа.', 'error');
     }
   };
 
@@ -284,8 +253,9 @@ const Translator: React.FC = () => {
     if (topActiveRef.current) return;
 
     if (botActiveRef.current) {
-      // Зөвхөн recorder зогсоо — activeRef-г өөрчлөхгүй
-      stopRecording();
+      stopSpeechRecognition();
+      botActiveRef.current = false;
+      setBotListening(false);
       return;
     }
 
@@ -294,30 +264,29 @@ const Translator: React.FC = () => {
     setTopResult('');
     setTopOriginal('');
 
-    const blob = await startRecording();
-
-    botActiveRef.current = false;
-    setBotListening(false);
-
-    // activeRef шалгахгүй — зөвхөн blob шалгана
-    if (!blob || blob.size === 0) return;
-
-    if (isProcessingRef.current) return;
-    isProcessingRef.current = true;
-    setTopTranslating(true);
-
     try {
-      // BOT хүн botLang-аар ярина → topLang руу орчуулж → дээд талд гарна
-      const { original, translated } = await apiTranslateAudio(blob, botLang, topLang);
-      setTopOriginal(original);
-      setTopResult(translated);
-      if (translated) speak(translated, topLang);
-    } catch (e) {
-      console.error('Bot translation error:', e);
-      showSnackbar('Орчуулга амжилтгүй боллоо.', 'error');
-    } finally {
-      setTopTranslating(false);
-      isProcessingRef.current = false;
+      const transcript = await startSpeechRecognition(botLang);
+      botActiveRef.current = false;
+      setBotListening(false);
+      if (!transcript.trim() || isProcessingRef.current) return;
+
+      isProcessingRef.current = true;
+      setTopTranslating(true);
+      try {
+        const translated = await translateText(transcript, botLang, topLang);
+        setTopOriginal(transcript);
+        setTopResult(translated);
+        if (translated) speak(translated, topLang);
+      } catch {
+        showSnackbar('Орчуулга амжилтгүй боллоо.', 'error');
+      } finally {
+        setTopTranslating(false);
+        isProcessingRef.current = false;
+      }
+    } catch {
+      botActiveRef.current = false;
+      setBotListening(false);
+      showSnackbar('Микрофон алдаа гарлаа.', 'error');
     }
   };
 
@@ -326,8 +295,7 @@ const Translator: React.FC = () => {
     return () => {
       topActiveRef.current = false;
       botActiveRef.current = false;
-      stopRecording();
-      stopStream();
+      stopSpeechRecognition();
       window.speechSynthesis.cancel();
     };
   }, []);

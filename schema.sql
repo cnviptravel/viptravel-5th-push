@@ -162,3 +162,18 @@ CREATE TABLE IF NOT EXISTS api_usage_log (
 CREATE INDEX IF NOT EXISTS idx_api_usage_api_name ON api_usage_log(api_name);
 CREATE INDEX IF NOT EXISTS idx_api_usage_created_at ON api_usage_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_api_usage_user_id ON api_usage_log(user_id);
+
+-- Translations cache table
+CREATE TABLE IF NOT EXISTS translations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  text_hash TEXT NOT NULL,
+  original_text TEXT NOT NULL,
+  translated_text TEXT NOT NULL,
+  source_lang TEXT NOT NULL,
+  target_lang TEXT NOT NULL,
+  engine TEXT,
+  created_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_translations_hash ON translations(text_hash);
+CREATE INDEX IF NOT EXISTS idx_translations_langs ON translations(source_lang, target_lang);
+CREATE INDEX IF NOT EXISTS idx_translations_created ON translations(created_at);

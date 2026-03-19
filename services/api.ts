@@ -897,38 +897,55 @@ export const apiUnfollowUser = async (currentUserId: string, targetUserId: strin
 };
 
 export const apiGetAllBookings = async (): Promise<Booking[]> => {
-    const stored = localStorage.getItem('cj_travel_current_user');
-    const u = stored ? JSON.parse(stored) : null;
-    const res = await fetch(`${API_URL}/bookings/all?userId=${u?._id || ''}`);
-    if (!res.ok) throw new Error('Failed to fetch bookings');
-    const data = await res.json() as any;
-    return (data.data || data) as Booking[];
+    try {
+        const stored = localStorage.getItem('cj_travel_current_user');
+        const u = stored ? JSON.parse(stored) : null;
+        const res = await fetch(`${API_URL}/bookings/all?userId=${u?._id || ''}`);
+        if (!res.ok) return [];
+        const data = await res.json() as any;
+        return (Array.isArray(data) ? data : (data.data || data.results || [])) as Booking[];
+    } catch (e) {
+        console.error('apiGetAllBookings error:', e);
+        return [];
+    }
 };
 
 export const apiGetApiUsage = async (days = 30) => {
-    const stored = localStorage.getItem('cj_travel_current_user');
-    const u = stored ? JSON.parse(stored) : null;
-    const res = await fetch(`${API_URL}/admin/api-usage?days=${days}&userId=${u?._id || ''}`);
-    if (!res.ok) throw new Error('Failed');
-    return await res.json() as any;
+    try {
+        const stored = localStorage.getItem('cj_travel_current_user');
+        const u = stored ? JSON.parse(stored) : null;
+        const res = await fetch(`${API_URL}/admin/api-usage?days=${days}&userId=${u?._id || ''}`);
+        if (!res.ok) return { rows: [], total_cost: 0, period_days: days };
+        return await res.json() as any;
+    } catch {
+        return { rows: [], total_cost: 0, period_days: days };
+    }
 };
 
 export const apiGetApiUsageDetail = async (days = 30, apiName?: string) => {
-    const stored = localStorage.getItem('cj_travel_current_user');
-    const u = stored ? JSON.parse(stored) : null;
-    const p = new URLSearchParams({ days: String(days), userId: u?._id || '' });
-    if (apiName) p.set('api', apiName);
-    const res = await fetch(`${API_URL}/admin/api-usage/detail?${p}`);
-    if (!res.ok) throw new Error('Failed');
-    return await res.json() as any;
+    try {
+        const stored = localStorage.getItem('cj_travel_current_user');
+        const u = stored ? JSON.parse(stored) : null;
+        const p = new URLSearchParams({ days: String(days), userId: u?._id || '' });
+        if (apiName) p.set('api', apiName);
+        const res = await fetch(`${API_URL}/admin/api-usage/detail?${p}`);
+        if (!res.ok) return [];
+        return await res.json() as any;
+    } catch {
+        return [];
+    }
 };
 
 export const apiGetApiUsageByDay = async (days = 30) => {
-    const stored = localStorage.getItem('cj_travel_current_user');
-    const u = stored ? JSON.parse(stored) : null;
-    const res = await fetch(`${API_URL}/admin/api-usage/daily?days=${days}&userId=${u?._id || ''}`);
-    if (!res.ok) throw new Error('Failed');
-    return await res.json() as any;
+    try {
+        const stored = localStorage.getItem('cj_travel_current_user');
+        const u = stored ? JSON.parse(stored) : null;
+        const res = await fetch(`${API_URL}/admin/api-usage/daily?days=${days}&userId=${u?._id || ''}`);
+        if (!res.ok) return [];
+        return await res.json() as any;
+    } catch {
+        return [];
+    }
 };
 
 export const apiDeleteUser = async (userId: string): Promise<void> => {
@@ -937,4 +954,17 @@ export const apiDeleteUser = async (userId: string): Promise<void> => {
     const adminId = currentUser?._id || '';
     const res = await fetch(`${API_URL}/users/${userId}?userId=${adminId}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+};
+
+// Frontend-аас API usage log илгээх
+export const apiLogFrontendUsage = async (apiName: string, action: string, units: number = 1): Promise<void> => {
+    try {
+        const stored = localStorage.getItem('cj_travel_current_user');
+        const u = stored ? JSON.parse(stored) : null;
+        await fetch(`${API_URL}/log-api-usage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiName, action, units, userId: u?._id || null }),
+        });
+    } catch { /* ignore */ }
 };

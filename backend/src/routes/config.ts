@@ -2,6 +2,7 @@
 
 import { Env } from '../types/env';
 import { corsHeaders } from '../config/cors';
+import { logApiUsage } from '../utils/apiUsageLogger';
 
 /**
  * Get Mapbox access token
@@ -13,6 +14,7 @@ export async function handleGetMapboxToken(env: Env): Promise<Response> {
             status: 500, headers: corsHeaders 
         });
     }
+    await logApiUsage(env, 'mapbox_load', 'token_request', null, 1);
     return new Response(JSON.stringify({ token }), { 
         headers: { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" } 
     });

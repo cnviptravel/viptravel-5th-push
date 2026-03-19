@@ -18,5 +18,5 @@ export interface Env {
     GOOGLE_TRANSLATE_KEY: string;
     OPENAI_API_KEY: string;       // OpenAI API Key for Whisper and GPT
     METERED_API_KEY: string;      // Metered.ca TURN server API key
-    FIREBASE_SERVICE_ACCOUNT: string; // Firebase Admin SDK service account JSON
+    FIREBASE_SERVICE_ACCOUNT: string;
 }

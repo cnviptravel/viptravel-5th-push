@@ -12,10 +12,17 @@ const AdminServiceLog: React.FC = () => {
     (async () => {
       setLoading(true);
       try {
-        const [b, u] = await Promise.all([apiGetAllBookings(), apiGetAllUsers()]);
-        setBookings([...b].sort((a, z) => Number(z.createdAt) - Number(a.createdAt)));
+        const u = await apiGetAllUsers();
         setUsers(u);
-      } finally { setLoading(false); }
+      } catch (e) { console.error('Failed to load users:', e); }
+      try {
+        const b = await apiGetAllBookings();
+        setBookings([...b].sort((a, z) => Number(z.createdAt) - Number(a.createdAt)));
+      } catch (e) {
+        console.error('Failed to load bookings:', e);
+        setBookings([]);
+      }
+      setLoading(false);
     })();
   }, []);
 

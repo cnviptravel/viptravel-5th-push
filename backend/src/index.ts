@@ -86,10 +86,12 @@ import {
     handleTranslate,
     handleTranslateAudio,
     handleAiPlan,
-    handleTranscribe
+    handleTranscribe,
+    handleTranslateText
 } from './routes/translate';
 
 import { handleGetApiUsage, handleGetApiUsageDetail, handleGetApiUsageByDay, handleGetAllBookings } from './routes/admin';
+import { logApiUsage } from './utils/apiUsageLogger';
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -362,9 +364,26 @@ export default {
                 return handleUpdateConfig(request, env);
             }
 
+            // Frontend API usage log
+            if (method === "POST" && path === "/log-api-usage") {
+                try {
+                    const body = await request.json() as any;
+                    if (body.apiName) {
+                        await logApiUsage(env, body.apiName, body.action || 'frontend_call', body.userId || null, body.units || 1);
+                    }
+                    return new Response(JSON.stringify({ ok: true }), { headers: corsHeaders });
+                } catch {
+                    return new Response(JSON.stringify({ ok: false }), { headers: corsHeaders });
+                }
+            }
+
             // 10. AI TRANSLATION & TRANSCRIPTION ROUTES
             if (method === "POST" && path === "/translate") {
                 return handleTranslate(request, env);
+            }
+
+            if (method === "POST" && path === "/translate-text") {
+                return handleTranslateText(request, env);
             }
 
             if (method === "POST" && path === "/translate-audio") {

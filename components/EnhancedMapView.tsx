@@ -4,7 +4,7 @@ import Supercluster from 'supercluster';
 import { User } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../App';
-import { apiUpdateProfile } from '../services/api';
+import { apiUpdateProfile, apiLogFrontendUsage } from '../services/api';
 import { useMap } from '../contexts/MapContext';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useSnackbar } from '../contexts/SnackbarContext';
@@ -147,6 +147,8 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
         const data = await response.json();
         if (data.features && data.features.length > 0) {
           setUserAddress(data.features[0].place_name);
+          // Mapbox geocoding log
+          apiLogFrontendUsage('mapbox_geocoding', 'reverse_geocode', 1);
         }
       } catch (error) {
         console.error('Reverse geocoding failed:', error);

@@ -25,6 +25,22 @@ const m2mLangMap: Record<string, string> = {
     'cy': 'cy', 'zu': 'zu',
 };
 
+// Helper: текстийн hash үүсгэх
+async function makeHash(text: string, src: string, tgt: string): Promise<string> {
+    const key = `${text.toLowerCase().trim()}|${src}|${tgt}`;
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+}
+
+// Helper: хэлний нэр
+const LANG_NAMES: Record<string, string> = {
+    en:'English', mn:'Mongolian', zh:'Chinese', ru:'Russian',
+    ja:'Japanese', ko:'Korean', de:'German', fr:'French',
+    es:'Spanish', it:'Italian', ar:'Arabic', hi:'Hindi',
+    tr:'Turkish', pt:'Portuguese', th:'Thai', vi:'Vietnamese',
+    uk:'Ukrainian', pl:'Polish', nl:'Dutch', sv:'Swedish',
+};
+
 /**
  * Handle text translation using Cloudflare M2M100
  */
@@ -124,125 +140,169 @@ export async function handleTranslate(request: Request, env: Env): Promise<Respo
 }
 
 /**
- * Handle audio translation using Cloudflare Whisper + M2M100
+ * Handle audio translation using OpenAI Whisper + GPT-4o-mini + Llama fallback + Cache
  */
 export async function handleTranslateAudio(request: Request, env: Env): Promise<Response> {
     try {
-        console.log('[TranslateAudio] Starting audio translation...');
-        
         const formData = await request.formData();
         const audioFile = formData.get('audio') as File;
         const targetLang = formData.get('targetLang') as string || 'en';
         const sourceLang = formData.get('sourceLang') as string || 'mn';
 
-        console.log(`[TranslateAudio] Params: targetLang=${targetLang}, sourceLang=${sourceLang}`);
-
         if (!audioFile) {
-            console.error('[TranslateAudio] No audio file provided');
             return new Response(JSON.stringify({ error: 'No audio file' }), {
                 status: 400, headers: corsHeaders
             });
         }
 
-        console.log(`[TranslateAudio] File: ${audioFile.name}, size: ${audioFile.size}, type: ${audioFile.type}`);
+        const audioBuffer = await audioFile.arrayBuffer();
 
-        // Check if AI binding is available
-        if (!env.AI) {
-            console.error('[TranslateAudio] AI binding is not available');
-            return new Response(JSON.stringify({ 
-                error: 'AI service not configured',
-                original: '',
-                translated: ''
-            }), {
-                status: 503,
+        // ── 1. Speech-to-Text: OpenAI Whisper (монгол сайн таньдаг) ──
+        let originalText = '';
+        if (env.OPENAI_API_KEY) {
+            try {
+                const fd = new FormData();
+                const ext = (audioFile.type || '').includes('mp4') ? 'mp4' : 'webm';
+                fd.append('file', new Blob([audioBuffer], { type: audioFile.type || 'audio/webm' }), `audio.${ext}`);
+                fd.append('model', 'whisper-1');
+                if (sourceLang && sourceLang !== 'auto') fd.append('language', sourceLang);
+
+                const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}` },
+                    body: fd,
+                });
+                if (res.ok) {
+                    originalText = ((await res.json()) as any).text || '';
+                    console.log(`[Whisper-OAI] ${sourceLang}: "${originalText.substring(0, 80)}"`);
+                } else {
+                    throw new Error(`OpenAI ${res.status}`);
+                }
+            } catch (e: any) {
+                console.warn('[Whisper-OAI] Falling back to CF Whisper:', e.message);
+                const inp: any = { audio: [...new Uint8Array(audioBuffer)] };
+                if (sourceLang !== 'auto') inp.language = sourceLang;
+                originalText = ((await env.AI.run('@cf/openai/whisper', inp)) as any).text || '';
+            }
+        } else {
+            const inp: any = { audio: [...new Uint8Array(audioBuffer)] };
+            if (sourceLang !== 'auto') inp.language = sourceLang;
+            originalText = ((await env.AI.run('@cf/openai/whisper', inp)) as any).text || '';
+        }
+
+        if (!originalText.trim()) {
+            return new Response(JSON.stringify({ original: '', translated: '' }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
         }
 
-        // Step 1: Whisper — аудио → текст
-        console.log('[TranslateAudio] Step 1: Converting audio to text with Whisper...');
-        const audioBuffer = await audioFile.arrayBuffer();
-        console.log(`[TranslateAudio] Audio buffer size: ${audioBuffer.byteLength} bytes`);
-        
-        try {
-            const whisperInput: any = {
-                audio: [...new Uint8Array(audioBuffer)],
-            };
-            // sourceLang өгснөөр Whisper тэр хэлд тохируулж транскрипц хийнэ
-            // mn → монгол текст, en → англи текст, zh → хятад текст
-            if (sourceLang && sourceLang !== 'auto') {
-                whisperInput.language = sourceLang;
-            }
-            const whisperResult = await env.AI.run('@cf/openai/whisper-large-v3-turbo', whisperInput);
-            console.log('[TranslateAudio] Whisper API call successful');
+        // ── 2. D1 кэш шалгах ──
+        const hash = await makeHash(originalText, sourceLang, targetLang);
+        const cached = await env.DB.prepare(
+            `SELECT translated_text FROM translations WHERE text_hash=? AND source_lang=? AND target_lang=? LIMIT 1`
+        ).bind(hash, sourceLang, targetLang).first() as any;
 
-            const originalText = (whisperResult as any).text || '';
-            console.log(`[Whisper] Transcribed: "${originalText.substring(0, 100)}..."`);
-
-            const audioSeconds = audioBuffer.byteLength / 32000;
-            await logApiUsage(env, 'whisper', 'translate_audio', null, audioSeconds);
-
-            if (!originalText.trim()) {
-                console.log('[TranslateAudio] No text transcribed from audio');
-                return new Response(JSON.stringify({ original: '', translated: '' }), {
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-                });
-            }
-
-            // Step 2: M2M100 — текст → орчуулга
-            const src = m2mLangMap[sourceLang] || sourceLang;
-            const tgt = m2mLangMap[targetLang] || targetLang;
-
-            console.log(`[M2M100] Translating from ${src} to ${tgt}, text length: ${originalText.length}`);
-
-            try {
-                const translateResult = await env.AI.run('@cf/meta/m2m100-1.2b', {
-                    text: originalText,
-                    source_lang: src,
-                    target_lang: tgt,
-                });
-                console.log('[TranslateAudio] M2M100 API call successful');
-
-                const translatedText = (translateResult as any).translated_text || originalText;
-
-                console.log(`[M2M100] Result: "${translatedText.substring(0, 100)}..."`);
-
-                await logApiUsage(env, 'm2m100', 'translate_audio', null, 1);
-
-                return new Response(JSON.stringify({
-                    original: originalText,
-                    translated: translatedText
-                }), {
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-                });
-
-            } catch (m2mError: any) {
-                console.error('[TranslateAudio] M2M100 translation error:', m2mError);
-                return new Response(JSON.stringify({ 
-                    error: 'M2M100 translation failed', 
-                    details: m2mError.message 
-                }), {
-                    status: 500, headers: corsHeaders
-                });
-            }
-
-        } catch (whisperError: any) {
-            console.error('[TranslateAudio] Whisper transcription error:', whisperError);
-            return new Response(JSON.stringify({ 
-                error: 'Whisper transcription failed', 
-                details: whisperError.message 
-            }), {
-                status: 500, headers: corsHeaders
-            });
+        if (cached?.translated_text) {
+            console.log(`[Cache HIT] "${originalText.substring(0, 40)}"`);
+            await logApiUsage(env, 'whisper', 'translate_audio', null, audioBuffer.byteLength / 32000);
+            return new Response(JSON.stringify({
+                original: originalText,
+                translated: cached.translated_text,
+            }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
+        // ── 3. Орчуулга: GPT-4o-mini → Llama fallback ──
+        const srcName = LANG_NAMES[sourceLang] || sourceLang;
+        const tgtName = LANG_NAMES[targetLang] || targetLang;
+        let translatedText = originalText;
+        let engine = 'llama';
+
+        // GPT-4o-mini
+        let gptOk = false;
+        if (env.OPENAI_API_KEY) {
+            try {
+                const res = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: 'gpt-4o-mini',
+                        messages: [
+                            { role: 'system', content: `You are a translator. Translate from ${srcName} to ${tgtName}. Return ONLY the translated text, nothing else. No explanations, no quotes.` },
+                            { role: 'user', content: originalText }
+                        ],
+                        max_tokens: 500,
+                        temperature: 0.3,
+                    }),
+                });
+                if (res.ok) {
+                    translatedText = ((await res.json()) as any).choices?.[0]?.message?.content?.trim() || originalText;
+                    engine = 'gpt-4o-mini';
+                    gptOk = true;
+                    console.log(`[GPT-4o-mini] "${translatedText.substring(0, 80)}"`);
+                } else {
+                    const err = await res.text();
+                    console.warn(`[GPT-4o-mini] ${res.status}: ${err.substring(0, 100)}`);
+                    // 429 = rate limit, 402 = billing — Llama руу шилжнэ
+                }
+            } catch (e: any) {
+                console.warn('[GPT-4o-mini] Error:', e.message);
+            }
+        }
+
+        // Llama fallback (GPT амжилтгүй болсон үед)
+        if (!gptOk) {
+            try {
+                const result = await env.AI.run('@cf/meta/llama-3.1-8b-instruct' as any, {
+                    messages: [
+                        { role: 'system', content: `You are a translator. Translate from ${srcName} to ${tgtName}. Return ONLY the translated text, nothing else.` },
+                        { role: 'user', content: originalText }
+                    ],
+                    max_tokens: 500,
+                } as any);
+                const llamaText = (result as any).response?.trim() || '';
+                if (llamaText) {
+                    translatedText = llamaText;
+                    engine = 'llama';
+                    console.log(`[Llama] "${translatedText.substring(0, 80)}"`);
+                }
+            } catch (e: any) {
+                console.error('[Llama] Error:', e.message);
+                // M2M100 last resort
+                try {
+                    const src2 = m2mLangMap[sourceLang] || sourceLang;
+                    const tgt2 = m2mLangMap[targetLang] || targetLang;
+                    const r = await env.AI.run('@cf/meta/m2m100-1.2b', { text: originalText, source_lang: src2, target_lang: tgt2 });
+                    translatedText = (r as any).translated_text || originalText;
+                    engine = 'm2m100';
+                } catch { /* use original */ }
+            }
+        }
+
+        // ── 4. D1-д хадгалах ──
+        try {
+            await env.DB.prepare(
+                `INSERT OR IGNORE INTO translations (text_hash, original_text, translated_text, source_lang, target_lang, engine, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`
+            ).bind(hash, originalText, translatedText, sourceLang, targetLang, engine, Date.now()).run();
+        } catch (e) {
+            console.error('[DB] Save translation failed:', e);
+        }
+
+        // ── 5. API usage log ──
+        await logApiUsage(env, 'whisper', 'translate_audio', null, audioBuffer.byteLength / 32000);
+        if (engine === 'gpt-4o-mini') await logApiUsage(env, 'whisper', 'gpt_translate', null, 1);
+
+        return new Response(JSON.stringify({
+            original: originalText,
+            translated: translatedText,
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
     } catch (e: any) {
-        console.error('[TranslateAudio] General error:', e);
-        return new Response(JSON.stringify({ 
-            error: 'Audio translation failed', 
-            details: e.message,
-            stack: e.stack 
-        }), {
+        console.error('[TranslateAudio] Error:', e);
+        return new Response(JSON.stringify({ error: 'Audio translation failed', details: e.message }), {
             status: 500, headers: corsHeaders
         });
     }
@@ -299,27 +359,39 @@ export async function handleTranscribe(request: Request, env: Env, ctx: Executio
 
         console.log(`[Transcribe] Processing audio: ${audioFile.name}, size: ${audioFile.size}, type: ${audioFile.type}`);
 
-        // Step 1: Transcribe audio using Cloudflare AI Whisper
+        // Step 1: Transcribe audio using OpenAI Whisper or Cloudflare Whisper
         const audioBuffer = await audioFile.arrayBuffer();
         let transcribedText = "";
         
-        try {
-            const whisperInput: any = {
-                audio: [...new Uint8Array(audioBuffer)],
-            };
-            if (sourceLang && sourceLang !== 'auto') {
-                whisperInput.language = sourceLang;
+        if (env.OPENAI_API_KEY) {
+            try {
+                const fd = new FormData();
+                const ext = (audioFile.type || '').includes('mp4') ? 'mp4' : 'webm';
+                fd.append('file', new Blob([audioBuffer], { type: audioFile.type || 'audio/webm' }), `audio.${ext}`);
+                fd.append('model', 'whisper-1');
+                if (sourceLang && sourceLang !== 'auto') fd.append('language', sourceLang);
+                const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}` },
+                    body: fd,
+                });
+                if (res.ok) {
+                    transcribedText = ((await res.json()) as any).text || '';
+                } else {
+                    throw new Error(`${res.status}`);
+                }
+            } catch {
+                const inp: any = { audio: [...new Uint8Array(audioBuffer)] };
+                if (sourceLang !== 'auto') inp.language = sourceLang;
+                transcribedText = ((await env.AI.run('@cf/openai/whisper', inp)) as any).text || '';
             }
-            const whisperResult = await env.AI.run('@cf/openai/whisper-large-v3-turbo', whisperInput);
-            transcribedText = (whisperResult as any).text || "";
-            console.log(`[Transcribe] Whisper result: ${transcribedText.substring(0, 100)}...`);
-        } catch (whisperError: any) {
-            console.error("[Transcribe] Whisper error:", whisperError);
-            return new Response(JSON.stringify({ 
-                error: "Transcription failed", 
-                details: whisperError.message 
-            }), { status: 500, headers: corsHeaders });
+        } else {
+            const inp: any = { audio: [...new Uint8Array(audioBuffer)] };
+            if (sourceLang !== 'auto') inp.language = sourceLang;
+            transcribedText = ((await env.AI.run('@cf/openai/whisper', inp)) as any).text || '';
         }
+        
+        console.log(`[Transcribe] Whisper result: ${transcribedText.substring(0, 100)}...`);
 
         if (!transcribedText.trim()) {
             return new Response(JSON.stringify({ 
@@ -330,22 +402,66 @@ export async function handleTranscribe(request: Request, env: Env, ctx: Executio
             }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        // Step 2: Translate using M2M100
+        // Step 2: D1 кэш шалгах
+        const hash2 = await makeHash(transcribedText, sourceLang, targetLang);
+        const cached2 = await env.DB.prepare(
+            `SELECT translated_text FROM translations WHERE text_hash=? AND source_lang=? AND target_lang=? LIMIT 1`
+        ).bind(hash2, sourceLang, targetLang).first() as any;
+
         let translatedText = transcribedText;
         
-        try {
-            const src = m2mLangMap[sourceLang] || sourceLang;
-            const tgt = m2mLangMap[targetLang] || targetLang;
-            const translateResult = await env.AI.run('@cf/meta/m2m100-1.2b', {
-                text: transcribedText,
-                source_lang: src,
-                target_lang: tgt,
-            });
-            translatedText = (translateResult as any).translated_text || transcribedText;
-            console.log(`[Transcribe] M2M100 translated: ${translatedText.substring(0, 100)}...`);
-        } catch (translateError: any) {
-            console.warn("[Transcribe] M2M100 translation failed, using original:", translateError);
+        if (cached2?.translated_text) {
+            translatedText = cached2.translated_text;
+        } else {
+            const srcN = LANG_NAMES[sourceLang] || sourceLang;
+            const tgtN = LANG_NAMES[targetLang] || targetLang;
+            let eng2 = 'llama';
+            let ok2 = false;
+            
+            // GPT-4o-mini
+            if (env.OPENAI_API_KEY) {
+                try {
+                    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            model: 'gpt-4o-mini',
+                            messages: [
+                                { role: 'system', content: `Translate from ${srcN} to ${tgtN}. Return ONLY the translation.` },
+                                { role: 'user', content: transcribedText }
+                            ],
+                            max_tokens: 500, temperature: 0.3,
+                        }),
+                    });
+                    if (r.ok) {
+                        translatedText = ((await r.json()) as any).choices?.[0]?.message?.content?.trim() || transcribedText;
+                        eng2 = 'gpt-4o-mini'; ok2 = true;
+                    }
+                } catch { /* fallback */ }
+            }
+            
+            // Llama fallback
+            if (!ok2) {
+                try {
+                    const r2 = await env.AI.run('@cf/meta/llama-3.1-8b-instruct' as any, {
+                        messages: [
+                            { role: 'system', content: `Translate from ${srcN} to ${tgtN}. Return ONLY the translation.` },
+                            { role: 'user', content: transcribedText }
+                        ], max_tokens: 500,
+                    } as any);
+                    translatedText = (r2 as any).response?.trim() || transcribedText;
+                } catch { /* use original */ }
+            }
+            
+            // D1-д хадгалах
+            try {
+                await env.DB.prepare(
+                    `INSERT OR IGNORE INTO translations (text_hash,original_text,translated_text,source_lang,target_lang,engine,created_at) VALUES (?,?,?,?,?,?,?)`
+                ).bind(hash2, transcribedText, translatedText, sourceLang, targetLang, eng2, Date.now()).run();
+            } catch { /* ignore */ }
         }
+        
+        console.log(`[Transcribe] Translated: ${translatedText.substring(0, 100)}...`);
 
         // Step 3: Send to Pusher if channel and userId provided
         if (channel && userId) {
@@ -371,6 +487,102 @@ export async function handleTranscribe(request: Request, env: Env, ctx: Executio
 
     } catch (e: any) {
         console.error("[Transcribe] Error:", e);
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+    }
+}
+
+/**
+ * Text-to-text translation with cache + GPT-4o-mini + Llama fallback
+ */
+export async function handleTranslateText(request: Request, env: Env): Promise<Response> {
+    try {
+        const { text, sourceLang, targetLang } = await request.json() as any;
+
+        if (!text?.trim()) {
+            return new Response(JSON.stringify({ translated: '' }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
+        // 1. D1 кэш шалгах
+        const hash = await makeHash(text, sourceLang, targetLang);
+        const cached = await env.DB.prepare(
+            `SELECT translated_text FROM translations WHERE text_hash=? AND source_lang=? AND target_lang=? LIMIT 1`
+        ).bind(hash, sourceLang, targetLang).first() as any;
+
+        if (cached?.translated_text) {
+            console.log(`[Cache HIT] "${text.substring(0, 40)}"`);
+            return new Response(JSON.stringify({ translated: cached.translated_text, cached: true }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
+        const srcName = LANG_NAMES[sourceLang] || sourceLang;
+        const tgtName = LANG_NAMES[targetLang] || targetLang;
+        let translated = text;
+        let engine = 'llama';
+
+        // 2. GPT-4o-mini
+        let gptOk = false;
+        if (env.OPENAI_API_KEY) {
+            try {
+                const res = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: 'gpt-4o-mini',
+                        messages: [
+                            { role: 'system', content: `Translate from ${srcName} to ${tgtName}. Return ONLY the translated text.` },
+                            { role: 'user', content: text }
+                        ],
+                        max_tokens: 500, temperature: 0.3,
+                    }),
+                });
+                if (res.ok) {
+                    translated = ((await res.json()) as any).choices?.[0]?.message?.content?.trim() || text;
+                    engine = 'gpt-4o-mini';
+                    gptOk = true;
+                }
+            } catch { /* fallback */ }
+        }
+
+        // 3. Llama fallback
+        if (!gptOk) {
+            try {
+                const r = await env.AI.run('@cf/meta/llama-3.1-8b-instruct' as any, {
+                    messages: [
+                        { role: 'system', content: `Translate from ${srcName} to ${tgtName}. Return ONLY the translation.` },
+                        { role: 'user', content: text }
+                    ], max_tokens: 500,
+                } as any);
+                translated = (r as any).response?.trim() || text;
+                engine = 'llama';
+            } catch (e: any) {
+                console.error('[Llama] Error:', e.message);
+                // M2M100 last resort
+                try {
+                    const src2 = m2mLangMap[sourceLang] || sourceLang;
+                    const tgt2 = m2mLangMap[targetLang] || targetLang;
+                    const r2 = await env.AI.run('@cf/meta/m2m100-1.2b', { text, source_lang: src2, target_lang: tgt2 });
+                    translated = (r2 as any).translated_text || text;
+                    engine = 'm2m100';
+                } catch { /* use original */ }
+            }
+        }
+
+        // 4. D1-д хадгалах
+        try {
+            await env.DB.prepare(
+                `INSERT OR IGNORE INTO translations (text_hash,original_text,translated_text,source_lang,target_lang,engine,created_at) VALUES (?,?,?,?,?,?,?)`
+            ).bind(hash, text, translated, sourceLang, targetLang, engine, Date.now()).run();
+        } catch (e) { console.error('[DB] Save failed:', e); }
+
+        await logApiUsage(env, engine === 'gpt-4o-mini' ? 'gemini_flash' : 'm2m100', 'translate_text', null, 1);
+
+        return new Response(JSON.stringify({ translated }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+    } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
     }
 }

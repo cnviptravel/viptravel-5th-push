@@ -24,9 +24,19 @@ const AdminDashboard: React.FC = () => {
     (async () => {
       setLoading(true);
       try {
-        const [u, b] = await Promise.all([apiGetAllUsers(), apiGetAllBookings()]);
-        setUsers(u); setBookings(b);
-      } finally { setLoading(false); }
+        const u = await apiGetAllUsers();
+        setUsers(u);
+      } catch (e) {
+        console.error('Failed to load users:', e);
+      }
+      try {
+        const b = await apiGetAllBookings();
+        setBookings(b);
+      } catch (e) {
+        console.error('Failed to load bookings:', e);
+        setBookings([]);
+      }
+      setLoading(false);
     })();
   }, []);
 

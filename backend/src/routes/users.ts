@@ -9,7 +9,7 @@ import { createUserController } from '../controllers/users';
  */
 export async function handleGetUsers(env: Env): Promise<Response> {
     const controller = createUserController(env);
-    return await controller.getAllUsers(new Request(''), env);
+    return await controller.getAllUsers(new Request('http://localhost'), env);
 }
 
 /**
@@ -17,7 +17,7 @@ export async function handleGetUsers(env: Env): Promise<Response> {
  */
 export async function handleGetUsersByRole(role: string, env: Env): Promise<Response> {
     const controller = createUserController(env);
-    return await controller.getUsersByRole(role, new Request(''), env);
+    return await controller.getUsersByRole(role, new Request('http://localhost'), env);
 }
 
 /**
@@ -25,7 +25,7 @@ export async function handleGetUsersByRole(role: string, env: Env): Promise<Resp
  */
 export async function handleGetUser(userId: string, env: Env): Promise<Response> {
     const controller = createUserController(env);
-    return await controller.getUserById(userId, new Request(''), env);
+    return await controller.getUserById(userId, new Request('http://localhost'), env);
 }
 
 /**

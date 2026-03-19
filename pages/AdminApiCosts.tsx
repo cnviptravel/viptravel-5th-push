@@ -21,14 +21,15 @@ const AdminApiCosts: React.FC = () => {
       try {
         const [s, d, det] = await Promise.all([apiGetApiUsage(days), apiGetApiUsageByDay(days), apiGetApiUsageDetail(days, selectedApi||undefined)]);
         setSummary(s);
-        setDaily(Array.isArray(d?.data?.results) ? d.data.results : Array.isArray(d?.data) ? d.data : []);
-        setDetail(Array.isArray(det?.data?.results) ? det.data.results : Array.isArray(det?.data) ? det.data : []);
+        // detail болон daily нь шууд array буцаана
+        setDaily(Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : []));
+        setDetail(Array.isArray(det) ? det : (Array.isArray(det?.data) ? det.data : []));
       } catch(e) { console.error(e); } finally { setLoading(false); }
     })();
   }, [days, selectedApi]);
 
-  const rows: any[] = summary?.data?.rows || [];
-  const totalCost: number = summary?.data?.total_cost || 0;
+  const rows: any[] = summary?.rows || [];
+  const totalCost: number = summary?.total_cost || 0;
   const dailyTotals: Record<string,number> = {};
   daily.forEach((r:any) => { dailyTotals[r.day] = (dailyTotals[r.day]||0) + (r.daily_cost||0); });
   const dayEntries = Object.entries(dailyTotals).sort();
@@ -70,10 +71,10 @@ const AdminApiCosts: React.FC = () => {
                   <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${cc}`}>
                     <span className="material-symbols-outlined text-lg">{ic}</span>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-sm dark:text-white truncate">{row.description}</p>
-                    <p className="text-[10px] text-slate-400">{Number(row.call_count).toLocaleString()} дуудлага · {Number(row.total_units).toFixed(2)} {row.unit_type}</p>
-                  </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm dark:text-white truncate">{row.description}</p>
+                  <p className="text-[10px] text-slate-400">{Number(row.call_count).toLocaleString()} дуудлага · {Number(row.total_units).toFixed(2)} {row.unit_type} · {Number(row.unique_users || row.call_count).toLocaleString()} хэрэглэгч</p>
+                </div>
                   <div className="text-right flex-shrink-0">
                     <p className="font-black text-sm text-orange-500">${Number(row.total_cost).toFixed(4)}</p>
                     <p className="text-[10px] text-slate-400">{pct.toFixed(1)}%</p>
@@ -110,7 +111,7 @@ const AdminApiCosts: React.FC = () => {
             {Object.keys(ICONS).map(k => <button key={k} onClick={() => setSelectedApi(k)} className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap ${selectedApi===k?'bg-primary text-white':'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>{k}</button>)}
           </div>
           {detail.length === 0 ? <p className="text-center text-slate-400 py-8 text-sm">Мэдээлэл байхгүй</p> : detail.map((row:any,i:number) => {
-            const d = new Date(row.created_at);
+            const d = new Date(row.last_called_at || row.updated_at || Date.now());
             return (
               <div key={i} className="bg-white dark:bg-slate-900 rounded-xl p-3 border border-slate-100 dark:border-slate-800 flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${COLORS[row.api_name]||'bg-slate-100 text-slate-500'}`}>

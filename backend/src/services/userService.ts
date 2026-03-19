@@ -24,7 +24,7 @@ export class UserService {
      */
     async getUsersByRole(role: string): Promise<any[]> {
         return await this.db.queryAll(
-            'SELECT * FROM users WHERE role = ? ORDER BY created_at DESC',
+            "SELECT * FROM users WHERE role = ? AND status = 'approved' ORDER BY created_at DESC",
             role
         );
     }
