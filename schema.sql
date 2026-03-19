@@ -172,8 +172,10 @@ CREATE TABLE IF NOT EXISTS translations (
   source_lang TEXT NOT NULL,
   target_lang TEXT NOT NULL,
   engine TEXT,
-  created_at INTEGER
+  created_at INTEGER,
+  usage_count INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_translations_hash ON translations(text_hash);
 CREATE INDEX IF NOT EXISTS idx_translations_langs ON translations(source_lang, target_lang);
 CREATE INDEX IF NOT EXISTS idx_translations_created ON translations(created_at);
+CREATE INDEX IF NOT EXISTS idx_translations_usage ON translations(usage_count DESC);

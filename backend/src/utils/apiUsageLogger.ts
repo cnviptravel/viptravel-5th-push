@@ -7,6 +7,8 @@ export const API_COSTS: Record<string, {
 }> = {
   whisper:          { costPerUnit: 0.000011,     unitType: 'seconds',             description: 'Cloudflare Whisper — аудио транскрипц',      freeTierDaily: 100,        freeTierPeriod: 'daily'   },
   m2m100:           { costPerUnit: 0.000011,     unitType: 'requests',            description: 'Cloudflare M2M100 — текст орчуулга',          freeTierDaily: 100,        freeTierPeriod: 'daily'   },
+  'gpt-4o-mini':    { costPerUnit: 0.00000015,   unitType: 'requests',            description: 'OpenAI GPT-4o-mini — текст орчуулга',         freeTierMonthly: 0,        freeTierPeriod: 'monthly' },
+  llama:            { costPerUnit: 0.000011,     unitType: 'requests',            description: 'Cloudflare Llama — fallback орчуулга',        freeTierDaily: 100,        freeTierPeriod: 'daily'   },
   gemini_flash:     { costPerUnit: 0.0000000375, unitType: 'tokens',              description: 'Google Gemini Flash — аялалын төлөвлөгөө',    freeTierDaily: 1500,       freeTierPeriod: 'daily'   },
   pusher_message:   { costPerUnit: 0.000000245,  unitType: 'messages',            description: 'Pusher — realtime мессеж/event',              freeTierDaily: 200000,     freeTierPeriod: 'daily'   },
   brevo_email:      { costPerUnit: 0.00125,      unitType: 'emails',              description: 'Brevo — OTP/notification имэйл',              freeTierDaily: 300,        freeTierPeriod: 'daily'   },

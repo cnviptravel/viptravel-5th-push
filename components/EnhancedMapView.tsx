@@ -741,11 +741,9 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
       )}
 
       {validUsers.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur">
-          <div className="text-center">
-            <span className="material-symbols-outlined text-4xl mb-2 opacity-50 text-slate-500">location_off</span>
-            <p className="text-slate-500 text-sm">No approved users with location data</p>
-          </div>
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 dark:bg-slate-900/90 px-4 py-2 rounded-full shadow-md flex items-center gap-2 pointer-events-none">
+          <span className="material-symbols-outlined text-sm text-slate-400">location_off</span>
+          <p className="text-slate-500 text-xs whitespace-nowrap">No users with location data</p>
         </div>
       )}
 

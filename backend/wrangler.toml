@@ -6,6 +6,7 @@ compatibility_flags = [ "nodejs_compat" ]
 [vars]
 BREVO_API_KEY = "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"
 METERED_API_KEY = "03cfa62a93cdaf6ea6368f6b5d5b68e2027c"
+MAPBOX_ACCESS_TOKEN = "pk.eyJ1IjoiamtlewdHJhdmVsLW9mZmljaWFsIiwiYSI6ImNtbHd6Nm15djBwN24zZXBxdmhiZWtyczcifQ.BeHiRRsxxK51QYPe4v73Ug"
 
 # R2 Bucket Холболт
 [[r2_buckets]]

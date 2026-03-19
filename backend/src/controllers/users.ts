@@ -1,6 +1,6 @@
 import { Env } from '../types/env';
 import { AppError, errorHandler } from '../errors';
-import { successResponse } from '../utils/response';
+import { formatUserResponse, successResponse } from '../utils/response';
 import { createUserService } from '../services/userService';
 import { validateRequest, UserSchemas } from '../middleware/validation';
 import { requireAdmin, requireSelfOrAdmin } from '../middleware/auth';
@@ -37,7 +37,8 @@ export class UserController {
             // Temporarily disable admin check for compatibility
             // await requireAdmin(request, env);
             const users = await this.userService.getUsersByRole(role);
-            return successResponse(users);
+            const formatted = users.map((u: any) => formatUserResponse(u));
+            return successResponse(formatted);
         } catch (error) {
             return errorHandler(error);
         }

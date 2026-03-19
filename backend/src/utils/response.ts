@@ -31,33 +31,77 @@ export function formatUserResponse(r: any): any {
     const role = r.role || 'traveler';
     const emailV = !!r.isEmailVerified;
     const phoneV = !!r.isPhoneVerified;
-    
+
+    // location: JSON string → object
+    let location = null;
+    if (r.location) {
+        try {
+            location = typeof r.location === 'string'
+                ? JSON.parse(r.location)
+                : r.location;
+        } catch {
+            location = null;
+        }
+    }
+
+    // JSON array талбарууд
+    const parseArr = (v: any, def: any[] = []) => {
+        if (!v) return def;
+        if (Array.isArray(v)) return v;
+        try { return JSON.parse(v); } catch { return def; }
+    };
+
     return {
         _id: String(r.id),
-        name: r.full_name || "Guest",
-        firstName: r.first_name || "",
-        lastName: r.last_name || "",
-        birthDate: r.birth_date || "",
-        referralSource: r.referral_source || "",
+        name: r.full_name || 'Guest',
+        firstName: r.first_name || '',
+        lastName: r.last_name || '',
+        birthDate: r.birth_date || '',
+        referralSource: r.referral_source || '',
         email: r.email,
-        role: role,
-        phone: r.phone || "",
+        role,
+        phone: r.phone || '',
         isPhoneVerified: phoneV,
         isEmailVerified: emailV,
         isVerified: !!r.isVerified,
         isAdmin: !!r.isAdmin,
-        nationality: r.nationality || "Mongolia",
-        privacy: { showEmail: false, showPhone: false, showOnlineStatus: true },
-        blockedUsers: JSON.parse(r.blockedUsers || "[]"),
-        savedPostIds: JSON.parse(r.savedPostIds || "[]"),
-        travelPhotos: typeof r.travelPhotos === "string" ? JSON.parse(r.travelPhotos || "[]") : (r.travelPhotos || []),
-        visitedPlaces: typeof r.visitedPlaces === "string" ? JSON.parse(r.visitedPlaces || "[]") : (r.visitedPlaces || []),
-        languages: typeof r.languages === "string" ? JSON.parse(r.languages || "[]") : (r.languages || []),
-        examResults: typeof r.examResults === "string" ? JSON.parse(r.examResults || "[]") : (r.examResults || []),
         status: r.status || 'pending',
-        profilePic: r.profilePic || "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png",
+        profilePic: r.profilePic || 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
+        coverPhoto: r.coverPhoto || null,
+
+        // Profile талбарууд
+        bio: r.bio || '',
+        nationality: r.nationality || 'Mongolia',
+        experience: r.experience || '',
+        serviceDescription: r.serviceDescription || '',
+        website: r.website || '',
+        operatingHours: r.operatingHours || '',
+        pricePerDay: r.pricePerDay || null,
+        averageRating: r.averageRating || null,
+        reviewCount: r.reviewCount || 0,
+
+        // Map-д шаардлагатай
+        location,
+
+        // JSON array талбарууд
+        blockedUsers: parseArr(r.blockedUsers),
+        savedPostIds: parseArr(r.savedPostIds),
+        travelPhotos: parseArr(r.travelPhotos),
+        visitedPlaces: parseArr(r.visitedPlaces),
+        languages: parseArr(r.languages),
+        guidingLocations: parseArr(r.guidingLocations),
+        examResults: parseArr(r.examResults),
+        services: parseArr(r.services),
+        amenities: parseArr(r.amenities),
+        verificationData: r.verificationData
+            ? (typeof r.verificationData === 'string'
+                ? JSON.parse(r.verificationData)
+                : r.verificationData)
+            : null,
+
+        privacy: { showEmail: false, showPhone: false, showOnlineStatus: true },
         createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
-        isOnline: true
+        isOnline: true,
     };
 }
 

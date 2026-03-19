@@ -204,6 +204,10 @@ export async function handleTranslateAudio(request: Request, env: Env): Promise<
 
         if (cached?.translated_text) {
             console.log(`[Cache HIT] "${originalText.substring(0, 40)}"`);
+            // usage_count нэмэгдүүлэх
+            await env.DB.prepare(
+                `UPDATE translations SET usage_count = usage_count + 1 WHERE text_hash=? AND source_lang=? AND target_lang=?`
+            ).bind(hash, sourceLang, targetLang).run();
             await logApiUsage(env, 'whisper', 'translate_audio', null, audioBuffer.byteLength / 32000);
             return new Response(JSON.stringify({
                 original: originalText,
@@ -292,8 +296,10 @@ export async function handleTranslateAudio(request: Request, env: Env): Promise<
         }
 
         // ── 5. API usage log ──
+        // Whisper (аудио транскрипц) тусдаа бүртгэх
         await logApiUsage(env, 'whisper', 'translate_audio', null, audioBuffer.byteLength / 32000);
-        if (engine === 'gpt-4o-mini') await logApiUsage(env, 'whisper', 'gpt_translate', null, 1);
+        // Орчуулгад ашигласан engine-г зөв бүртгэх
+        await logApiUsage(env, engine, 'translate_audio_translation', null, 1);
 
         return new Response(JSON.stringify({
             original: originalText,
@@ -412,6 +418,10 @@ export async function handleTranscribe(request: Request, env: Env, ctx: Executio
         
         if (cached2?.translated_text) {
             translatedText = cached2.translated_text;
+            // usage_count нэмэгдүүлэх
+            await env.DB.prepare(
+                `UPDATE translations SET usage_count = usage_count + 1 WHERE text_hash=? AND source_lang=? AND target_lang=?`
+            ).bind(hash2, sourceLang, targetLang).run();
         } else {
             const srcN = LANG_NAMES[sourceLang] || sourceLang;
             const tgtN = LANG_NAMES[targetLang] || targetLang;
@@ -512,6 +522,10 @@ export async function handleTranslateText(request: Request, env: Env): Promise<R
 
         if (cached?.translated_text) {
             console.log(`[Cache HIT] "${text.substring(0, 40)}"`);
+            // usage_count нэмэгдүүлэх
+            await env.DB.prepare(
+                `UPDATE translations SET usage_count = usage_count + 1 WHERE text_hash=? AND source_lang=? AND target_lang=?`
+            ).bind(hash, sourceLang, targetLang).run();
             return new Response(JSON.stringify({ translated: cached.translated_text, cached: true }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
@@ -577,7 +591,7 @@ export async function handleTranslateText(request: Request, env: Env): Promise<R
             ).bind(hash, text, translated, sourceLang, targetLang, engine, Date.now()).run();
         } catch (e) { console.error('[DB] Save failed:', e); }
 
-        await logApiUsage(env, engine === 'gpt-4o-mini' ? 'gemini_flash' : 'm2m100', 'translate_text', null, 1);
+        await logApiUsage(env, engine, 'translate_text', null, 1);
 
         return new Response(JSON.stringify({ translated }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
