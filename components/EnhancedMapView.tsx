@@ -9,6 +9,14 @@ import { useMap } from '../contexts/MapContext';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useSnackbar } from '../contexts/SnackbarContext';
 
+interface SavedPin {
+  id: string;
+  lat: number;
+  lng: number;
+  label: string;
+  createdAt: number;
+}
+
 interface EnhancedMapViewProps {
   users: User[];
   markerColor?: string;
@@ -68,6 +76,13 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
   const [userAddress, setUserAddress] = useState<string>('');
   const [locationPermission, setLocationPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [savedPins, setSavedPins] = useState<SavedPin[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('map_saved_pins') || '[]');
+    } catch { return []; }
+  });
+  const [pendingPin, setPendingPin] = useState<{ lat: number; lng: number } | null>(null);
+  const [pinLabelInput, setPinLabelInput] = useState('');
   
   // Refs
   const mapRef = useRef<any>(null);
@@ -376,6 +391,22 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
     };
   }, [reverseGeocode]);
 
+  // localStorage sync
+  useEffect(() => {
+    localStorage.setItem('map_saved_pins', JSON.stringify(savedPins));
+    window.dispatchEvent(new Event('pins-updated'));
+  }, [savedPins]);
+
+  // fly-to-pin event сонсох
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { lat, lng } = (e as CustomEvent).detail;
+      smoothFlyTo(lat, lng, 15);
+    };
+    window.addEventListener('fly-to-pin', handler);
+    return () => window.removeEventListener('fly-to-pin', handler);
+  }, [smoothFlyTo]);
+
   // Show loading state while fetching token
   if (!mapboxToken) {
     return (
@@ -433,9 +464,16 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
         {...viewport}
         onMove={evt => setViewport(evt.viewState)}
         onLoad={() => setMapLoaded(true)}
+        onClick={(e: any) => {
+          // Marker дээр дарсан бол skip
+          if (e.originalEvent.target.closest('.mapboxgl-marker')) return;
+          setPendingPin({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+          setPinLabelInput('');
+        }}
         mapStyle="mapbox://styles/mapbox/streets-v12"
         mapboxAccessToken={mapboxToken}
         style={{ width: '100%', height: '100%' }}
+        attributionControl={false}
         reuseMaps={true}
         transformRequest={(url, resourceType) => {
           if (resourceType === 'Tile') {
@@ -625,7 +663,94 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
             </div>
           </Popup>
         )}
+
+        {/* Хадгалагдсан тэмдэглэгээнүүд */}
+        {savedPins.map(pin => (
+          <Marker
+            key={`pin-${pin.id}`}
+            latitude={pin.lat}
+            longitude={pin.lng}
+            anchor="bottom"
+          >
+            <div className="flex flex-col items-center cursor-pointer group"
+              onClick={e => { e.stopPropagation(); smoothFlyTo(pin.lat, pin.lng, 15); }}
+            >
+              <div className="bg-primary text-white text-[10px] font-bold px-2 py-1 rounded-lg shadow-md
+                              opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap mb-1 pointer-events-none">
+                {pin.label}
+              </div>
+              <span className="material-symbols-outlined text-primary text-2xl drop-shadow-md"
+                    style={{ fontVariationSettings: "'FILL' 1" }}>
+                bookmark
+              </span>
+            </div>
+          </Marker>
+        ))}
       </Map>
+
+      {/* Шинэ тэмдэглэгээ оруулах popup */}
+      {pendingPin && (
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20
+                        bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200
+                        dark:border-slate-700 p-4 w-72">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>bookmark_add</span>
+            <h3 className="font-bold text-sm dark:text-white">Тэмдэглэгээ нэмэх</h3>
+          </div>
+          <input
+            autoFocus
+            type="text"
+            value={pinLabelInput}
+            onChange={e => setPinLabelInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && pinLabelInput.trim()) {
+                const newPin: SavedPin = {
+                  id: `pin_${Date.now()}`,
+                  lat: pendingPin.lat,
+                  lng: pendingPin.lng,
+                  label: pinLabelInput.trim(),
+                  createdAt: Date.now(),
+                };
+                setSavedPins(prev => [...prev, newPin]);
+                setPendingPin(null);
+              }
+              if (e.key === 'Escape') setPendingPin(null);
+            }}
+            placeholder="Газрын нэр оруулах..."
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2
+                       text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-slate-800
+                       dark:text-white mb-3"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPendingPin(null)}
+              className="flex-1 py-2 rounded-xl text-sm font-bold text-slate-500
+                         bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 transition-colors"
+            >
+              Болих
+            </button>
+            <button
+              disabled={!pinLabelInput.trim()}
+              onClick={() => {
+                if (!pinLabelInput.trim()) return;
+                const newPin: SavedPin = {
+                  id: `pin_${Date.now()}`,
+                  lat: pendingPin.lat,
+                  lng: pendingPin.lng,
+                  label: pinLabelInput.trim(),
+                  createdAt: Date.now(),
+                };
+                setSavedPins(prev => [...prev, newPin]);
+                setPendingPin(null);
+              }}
+              className="flex-1 py-2 rounded-xl text-sm font-bold text-white bg-primary
+                         disabled:opacity-40 hover:bg-primary/90 transition-colors"
+            >
+              Хадгалах
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Custom control buttons */}
       <div className="absolute top-4 right-4 flex flex-col gap-2">
@@ -694,8 +819,8 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
         </button>
       </div>
 
-      {/* Cache status indicator */}
-      <div className="absolute top-4 left-4 bg-white dark:bg-slate-900 rounded-2xl p-3 shadow-xl border border-slate-200 dark:border-slate-800">
+      {/* Cache status indicator — нуусан, логик хэвээр */}
+      <div className="hidden">
         <div className="flex items-center gap-2 mb-1">
           <span className="material-symbols-outlined text-sm text-blue-500">storage</span>
           <span className="text-xs font-bold dark:text-white">Map Cache</span>
@@ -720,7 +845,7 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
 
       {/* User location info panel */}
       {userLocation && (
-        <div className="absolute bottom-4 left-4 bg-white dark:bg-slate-900 rounded-2xl p-3 shadow-xl border border-slate-200 dark:border-slate-800">
+        <div className="hidden">
           <div className="flex items-center gap-2 mb-2">
             <div 
               className="w-3 h-3 rounded-full"
@@ -779,6 +904,7 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
                 </span>
                 <span className="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-bold">
                   GPS
+          
                 </span>
               </div>
             </div>

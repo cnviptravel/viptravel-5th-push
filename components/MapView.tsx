@@ -164,6 +164,7 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
         mapStyle="mapbox://styles/mapbox/streets-v12"
         mapboxAccessToken={mapboxToken}
         style={{ width: '100%', height: '100%' }}
+        attributionControl={false}
       >
         <NavigationControl position="top-right" />
         <GeolocateControl 

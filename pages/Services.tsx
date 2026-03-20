@@ -8,6 +8,60 @@ import { useMap } from '../contexts/MapContext';
 // Lazy load the EnhancedMapView component
 const EnhancedMapView = lazy(() => import('../components/EnhancedMapView'));
 
+const SavedPinsList: React.FC = () => {
+  const [pins, setPins] = useState<Array<{id:string;lat:number;lng:number;label:string}>>(() => {
+    try { return JSON.parse(localStorage.getItem('map_saved_pins') || '[]'); } catch { return []; }
+  });
+
+  // localStorage өөрчлөгдөхөд sync хийх
+  useEffect(() => {
+    const sync = () => {
+      try { setPins(JSON.parse(localStorage.getItem('map_saved_pins') || '[]')); } catch {}
+    };
+    window.addEventListener('storage', sync);
+    // EnhancedMapView-аас custom event авах
+    window.addEventListener('pins-updated', sync);
+    return () => {
+      window.removeEventListener('storage', sync);
+      window.removeEventListener('pins-updated', sync);
+    };
+  }, []);
+
+  if (pins.length === 0) return null;
+
+  return (
+    <div className="shrink-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-3 py-2">
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">
+        Хадгалсан тэмдэглэгээ ({pins.length})
+      </p>
+      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+        {pins.map(pin => (
+          <button
+            key={pin.id}
+            onClick={() => {
+              // Map руу event илгээх — EnhancedMapView сонсоно
+              window.dispatchEvent(new CustomEvent('fly-to-pin', {
+                detail: { lat: pin.lat, lng: pin.lng }
+              }));
+            }}
+            className="flex items-center gap-1.5 shrink-0 bg-slate-100 dark:bg-slate-800
+                       hover:bg-primary/10 hover:border-primary border border-transparent
+                       rounded-xl px-3 py-1.5 transition-colors group"
+          >
+            <span className="material-symbols-outlined text-primary text-sm"
+                  style={{ fontVariationSettings: "'FILL' 1" }}>
+              bookmark
+            </span>
+            <span className="text-xs font-bold dark:text-white whitespace-nowrap group-hover:text-primary">
+              {pin.label}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const Services: React.FC = () => {
   const [services, setServices] = useState<User[]>([]);
   const [allServices, setAllServices] = useState<User[]>([]);
@@ -242,24 +296,30 @@ const Services: React.FC = () => {
                 </button>
             </div>
 
-            {/* Map Container */}
-            <div className="flex-1 relative">
+            {/* Map + Saved pins list wrapper */}
+            <div className="flex flex-col h-full gap-0">
+              {/* Map - flex-1 авна */}
+              <div className="flex-1 min-h-0">
                 <Suspense fallback={
-                    <div className="w-full h-full rounded-3xl bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
-                        <div className="text-center">
-                            <div className="animate-spin rounded-full h-12 w-12 border-4 border-slate-300 border-t-primary mx-auto mb-4"></div>
-                            <p className="text-slate-500 text-sm font-medium">Loading Map...</p>
-                        </div>
+                  <div className="w-full h-full rounded-3xl bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-12 w-12 border-4 border-slate-300 border-t-primary mx-auto mb-4"></div>
+                      <p className="text-slate-500 text-sm font-medium">Loading Map...</p>
                     </div>
+                  </div>
                 }>
-                    <EnhancedMapView 
-                        users={services} 
-                        markerColor={roleFilter === 'guide' ? '#f97316' : roleFilter === 'provider' ? '#10b981' : '#3b82f6'}
-                        showLocationSaveButton={true}
-                        showRealTimeTracking={false}
-                        followMode={false}
-                    />
+                  <EnhancedMapView 
+                    users={services} 
+                    markerColor={roleFilter === 'guide' ? '#f97316' : roleFilter === 'provider' ? '#10b981' : '#3b82f6'}
+                    showLocationSaveButton={true}
+                    showRealTimeTracking={false}
+                    followMode={false}
+                  />
                 </Suspense>
+              </div>
+
+              {/* Доод хэсэг — хадгалагдсан тэмдэглэгээнүүд */}
+              <SavedPinsList />
             </div>
          </div>
       )}

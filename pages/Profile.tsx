@@ -99,6 +99,21 @@ const Profile: React.FC = () => {
     return () => clearInterval(timer);
   }, [examStarted, timeLeft]);
 
+  // Шинэ пост шуурхай profile-д нэмэх
+  useEffect(() => {
+    const prev = (window as any).__onNewPost;
+    (window as any).__onNewPost = (newPost: Post) => {
+      prev?.(newPost); // Feed callback-г дуудах (Feed хуудас нэгэн зэрэг mount байвал)
+      if (newPost.userId === auth.user?._id) {
+        setUserPosts(prevPosts => [newPost, ...prevPosts]);
+      }
+    };
+    return () => {
+      // Feed-ийн callback-г сэргээх
+      (window as any).__onNewPost = prev;
+    };
+  }, [auth.user?._id]);
+
   const loadUserPosts = async () => {
       if (!auth.user) return;
       const allPosts = await apiGetPosts();

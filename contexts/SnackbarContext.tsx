@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
-type SnackbarType = 'success' | 'error' | 'info' | 'warning';
+type SnackbarType = 'success' | 'error' | 'info' | 'warning' | 'loading';
 
 interface SnackbarMessage {
   id: number;
@@ -9,11 +9,13 @@ interface SnackbarMessage {
 }
 
 interface SnackbarContextType {
-  showSnackbar: (message: string, type?: SnackbarType) => void;
+  showSnackbar: (message: string, type?: SnackbarType) => number;
+  dismissSnackbar: (id: number) => void;
 }
 
 const SnackbarContext = createContext<SnackbarContextType>({
-  showSnackbar: () => {},
+  showSnackbar: () => 0,
+  dismissSnackbar: () => {},
 });
 
 export const useSnackbar = () => useContext(SnackbarContext);
@@ -23,12 +25,19 @@ let idCounter = 0;
 export const SnackbarProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [snackbars, setSnackbars] = useState<SnackbarMessage[]>([]);
 
-  const showSnackbar = useCallback((message: string, type: SnackbarType = 'info') => {
+  const showSnackbar = useCallback((message: string, type: SnackbarType = 'info'): number => {
     const id = ++idCounter;
     setSnackbars(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setSnackbars(prev => prev.filter(s => s.id !== id));
-    }, 3500);
+    if (type !== 'loading') {
+      setTimeout(() => {
+        setSnackbars(prev => prev.filter(s => s.id !== id));
+      }, 3500);
+    }
+    return id;
+  }, []);
+
+  const dismissSnackbar = useCallback((id: number) => {
+    setSnackbars(prev => prev.filter(s => s.id !== id));
   }, []);
 
   const remove = (id: number) => setSnackbars(prev => prev.filter(s => s.id !== id));
@@ -38,6 +47,7 @@ export const SnackbarProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     error: 'bg-red-600',
     info: 'bg-gray-800',
     warning: 'bg-yellow-500',
+    loading: 'bg-blue-600',
   };
 
   const icon: Record<SnackbarType, string> = {
@@ -45,10 +55,11 @@ export const SnackbarProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     error: '✕',
     info: 'ℹ',
     warning: '⚠',
+    loading: '↑',
   };
 
   return (
-    <SnackbarContext.Provider value={{ showSnackbar }}>
+    <SnackbarContext.Provider value={{ showSnackbar, dismissSnackbar }}>
       {children}
       <div className="fixed top-4 left-4 z-[9999] flex flex-col gap-2 items-start pointer-events-none">
         {snackbars.map(s => (
@@ -58,7 +69,11 @@ export const SnackbarProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             className={`pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-white text-sm max-w-xs w-max cursor-pointer ${bgColor[s.type]}`}
             style={{ animation: 'slideInLeft 0.3s ease' }}
           >
-            <span className="font-bold text-base leading-none">{icon[s.type]}</span>
+            {s.type === 'loading' ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+            ) : (
+              <span className="font-bold text-base leading-none">{icon[s.type]}</span>
+            )}
             <span>{s.message}</span>
           </div>
         ))}

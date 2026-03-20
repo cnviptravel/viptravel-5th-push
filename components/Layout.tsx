@@ -19,7 +19,7 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation();
-  const { showSnackbar } = useSnackbar();
+  const { showSnackbar, dismissSnackbar } = useSnackbar();
   const navigate = useNavigate();
   const { auth } = useContext(AuthContext);
   const { t } = useLanguage();
@@ -116,11 +116,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const handleCpSubmit = async () => {
       if (!cpText && !cpImage && !cpVideo) return;
       setCpLoading(true);
+
+      // 1. Modal хаах — хэрэглэгч хүлээхгүй
+      setShowCreatePost(false);
+
+      // 2. Loading snackbar харуулах
+      const loadingId = showSnackbar('Пост оруулж байна...', 'loading');
+
       let postType: 'regular' | 'service' | 'travel' = 'regular';
       if (auth.user?.role === UserRole.Traveler) postType = 'travel';
       else if ((auth.user?.role === UserRole.Provider || auth.user?.role === UserRole.Guide) && cpIsService) postType = 'service';
+
       try {
-          await apiCreatePost({
+          const newPost = await apiCreatePost({
               userId: auth.user!._id,
               userName: auth.user!.name || (auth.user as any).full_name || 'User',
               userPic: auth.user!.profilePic || 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
@@ -132,11 +140,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               capacity: cpIsService ? Number(cpCapacity) : undefined,
               likes: [], comments: []
           });
-          setCpText(''); setCpImage(null); setCpVideo(null); setCpIsService(false); setCpServiceTitle(''); setCpPrice(''); setCpCapacity('');
-          setShowCreatePost(false);
-          navigate('/');
-      } catch { showSnackbar("Failed", 'error'); }
-      finally { setCpLoading(false); }
+
+          // 3. Loading snackbar хаах
+          dismissSnackbar(loadingId);
+          showSnackbar('Пост амжилттай нийтлэгдлээ!', 'success');
+
+          // 4. Feed болон Profile-д шуурхай нэмэх (refresh хийхгүй)
+          const postWithId = { ...newPost, _id: newPost._id || (newPost as any).id };
+          (window as any).__onNewPost?.(postWithId);
+
+          // 5. Input цэвэрлэх
+          setCpText(''); setCpImage(null); setCpVideo(null);
+          setCpIsService(false); setCpServiceTitle(''); setCpPrice(''); setCpCapacity('');
+
+          // 6. Feed хуудас дээр биш бол Feed руу явах
+          if (location.pathname !== '/') navigate('/');
+
+      } catch {
+          dismissSnackbar(loadingId);
+          showSnackbar('Пост оруулахад алдаа гарлаа', 'error');
+      } finally {
+          setCpLoading(false);
+      }
   };
 
   const getNavClass = (path: string) => {

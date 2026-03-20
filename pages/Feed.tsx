@@ -60,6 +60,18 @@ const Feed: React.FC = () => {
     loadPosts();
   }, [location.search]);
 
+  // Шинэ пост шуурхай нэмэх (refresh хийхгүй)
+  useEffect(() => {
+    (window as any).__onNewPost = (newPost: Post) => {
+      setPosts(prev => [newPost, ...prev]);
+      setFilteredPosts(prev => [newPost, ...prev]);
+      setLocalComments(prev => ({ ...prev, [newPost._id]: [] }));
+    };
+    return () => {
+      delete (window as any).__onNewPost;
+    };
+  }, []);
+
   useEffect(() => {
     if (!searchQuery.trim()) {
       setFilteredPosts(posts);
