@@ -70,31 +70,59 @@ const CreatePost: React.FC = () => {
         postType = 'service';
     }
 
-    try {
-      await apiCreatePost({
-        userId: auth.user!._id,
-        
-        // --- ЗАСВАР ЭНД БАЙНА: name байхгүй бол full_name-ийг авна ---
-        userName: auth.user!.name || (auth.user as any).full_name || "Guest", 
-        // --------------------------------------------------------
+    const postData = {
+      userId: auth.user!._id,
+      userName: auth.user!.name || (auth.user as any).full_name || "Guest",
+      userPic: auth.user!.profilePic || "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png",
+      userRole: auth.user!.role,
+      text,
+      image: image || undefined,
+      video: video || undefined,
+      type: postType,
+      serviceTitle: isService ? serviceTitle : undefined,
+      price: isService ? Number(price) : undefined,
+      capacity: isService ? Number(capacity) : undefined,
+      likes: [],
+      comments: []
+    };
 
-        userPic: auth.user!.profilePic || "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png",
-        userRole: auth.user!.role,
-        text,
-        image: image || undefined,
-        video: video || undefined,
-        type: postType,
-        serviceTitle: isService ? serviceTitle : undefined,
-        price: isService ? Number(price) : undefined,
-        capacity: isService ? Number(capacity) : undefined,
-        likes: [], 
-        comments: []
-      });
-      navigate('/');
+    // Optimistic пост үүсгэх
+    const tempId = `optimistic_${Date.now()}`;
+    const optimisticPost = {
+      ...postData,
+      _id: tempId,
+      _isOptimistic: true,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Feed-д байвал optimistic пост шууд нэмэх
+    const addOptimistic = (window as any).__addOptimisticPost;
+    if (addOptimistic) {
+      addOptimistic(optimisticPost);
+    }
+
+    // Форм цэвэрлэж Feed рүү шилжих
+    setText('');
+    setImage(null);
+    setVideo(null);
+    setIsService(false);
+    setServiceTitle('');
+    setPrice('');
+    setCapacity('');
+    setIsLoading(false);
+    navigate('/');
+
+    // Дэвсгэрт API дуудлага
+    try {
+      const realPost = await apiCreatePost(postData);
+      const replace = (window as any).__replaceOptimisticPost;
+      if (replace && realPost?._id) {
+        replace(tempId, { ...realPost, _id: realPost._id || (realPost as any).id });
+      }
     } catch (err) {
-      showSnackbar("Failed to post", 'error');
-    } finally {
-      setIsLoading(false);
+      showSnackbar("Пост илгээхэд алдаа гарлаа", 'error');
+      const remove = (window as any).__removeOptimisticPost;
+      if (remove) remove(tempId);
     }
 };
 

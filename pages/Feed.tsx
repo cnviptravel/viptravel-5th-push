@@ -67,8 +67,25 @@ const Feed: React.FC = () => {
       setFilteredPosts(prev => [newPost, ...prev]);
       setLocalComments(prev => ({ ...prev, [newPost._id]: [] }));
     };
+    (window as any).__addOptimisticPost = (tempPost: any) => {
+      setPosts(prev => [tempPost, ...prev]);
+      setFilteredPosts(prev => [tempPost, ...prev]);
+      setLocalComments(prev => ({ ...prev, [tempPost._id]: [] }));
+    };
+    (window as any).__replaceOptimisticPost = (tempId: string, realPost: Post) => {
+      setPosts(prev => prev.map(p => p._id === tempId ? realPost : p));
+      setFilteredPosts(prev => prev.map(p => p._id === tempId ? realPost : p));
+      setLocalComments(prev => ({ ...prev, [realPost._id]: prev[tempId] || [] }));
+    };
+    (window as any).__removeOptimisticPost = (tempId: string) => {
+      setPosts(prev => prev.filter(p => p._id !== tempId));
+      setFilteredPosts(prev => prev.filter(p => p._id !== tempId));
+    };
     return () => {
       delete (window as any).__onNewPost;
+      delete (window as any).__addOptimisticPost;
+      delete (window as any).__replaceOptimisticPost;
+      delete (window as any).__removeOptimisticPost;
     };
   }, []);
 
@@ -226,6 +243,12 @@ const Feed: React.FC = () => {
 
               return (
                 <div id={`post-${post._id}`} key={post._id} className="bg-white dark:bg-slate-900 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-sm">
+                  {(post as any)._isOptimistic && (
+                    <div className="flex items-center gap-2 px-4 pt-3 text-xs text-slate-400">
+                      <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                      <span>Uploading...</span>
+                    </div>
+                  )}
                   {/* Post Header */}
                   <div className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate(`/profile/${post.userId}`)}>
