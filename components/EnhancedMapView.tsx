@@ -436,6 +436,13 @@ const EnhancedMapView: React.FC<EnhancedMapViewProps> = ({
         mapStyle="mapbox://styles/mapbox/streets-v12"
         mapboxAccessToken={mapboxToken}
         style={{ width: '100%', height: '100%' }}
+        reuseMaps={true}
+        transformRequest={(url, resourceType) => {
+          if (resourceType === 'Tile') {
+            return { url, headers: { 'Cache-Control': 'max-age=86400' } };
+          }
+          return { url };
+        }}
         interactive={true}
       >
         {/* Hidden GeolocateControl for programmatic access */}

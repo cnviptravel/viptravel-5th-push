@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'; 
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import { AuthState, User, UserRole } from './types';
 import Login from './pages/Login';
@@ -86,6 +86,28 @@ function createRingtone() {
 }
 
 import { useLanguage } from './contexts/LanguageContext';
+
+// PersistentServices — Services хуудсыг хэзээ ч unmount хийхгүй, зөвхөн CSS-ээр нуух/харуулах
+const PersistentServices: React.FC = () => {
+  const location = useLocation();
+  const isVisible = location.pathname === '/services';
+
+  return (
+    <div
+      style={{
+        display: isVisible ? 'block' : 'none',
+        position: isVisible ? 'relative' : 'absolute',
+        width: '100%',
+        height: isVisible ? '100%' : '0',
+        overflow: isVisible ? 'visible' : 'hidden',
+        pointerEvents: isVisible ? 'auto' : 'none',
+        zIndex: isVisible ? 1 : -1,
+      }}
+    >
+      <Services />
+    </div>
+  );
+};
 
 const AppContent: React.FC = () => {
   const { t } = useLanguage();
@@ -402,6 +424,9 @@ const AppContent: React.FC = () => {
     <AuthContext.Provider value={{ auth, setAuth, logout }}>
       <Router>
         <Layout>
+          {/* Services — хэзээ ч unmount болохгүй, зөвхөн нуугдана */}
+          {auth.isAuthenticated && <PersistentServices />}
+
           <Routes>
             <Route path="/login" element={!auth.isAuthenticated ? <Login /> : <Navigate to="/" />} />
             <Route path="/role-select" element={!auth.isAuthenticated ? <RoleSelection /> : <Navigate to="/" />} />
@@ -411,7 +436,8 @@ const AppContent: React.FC = () => {
             <Route path="/create" element={auth.isAuthenticated ? <CreatePost /> : <Navigate to="/login" />} />
             <Route path="/profile" element={auth.isAuthenticated ? <Profile /> : <Navigate to="/login" />} />
             <Route path="/profile/:userId" element={auth.isAuthenticated ? <PublicProfile /> : <Navigate to="/login" />} />
-            <Route path="/services" element={auth.isAuthenticated ? <Services /> : <Navigate to="/login" />} />
+            {/* /services route-г Routes-аас устгах — PersistentServices үүнийг орлоно */}
+            <Route path="/services" element={auth.isAuthenticated ? null : <Navigate to="/login" />} />
             <Route path="/live" element={auth.isAuthenticated ? <Live /> : <Navigate to="/login" />} />
             
             <Route path="/chats" element={auth.isAuthenticated ? <ChatList /> : <Navigate to="/login" />} />

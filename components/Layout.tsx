@@ -295,7 +295,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </header>
       )}
 
-      <main className={`flex-1 min-h-0 no-scrollbar ${isFixedPage ? 'overflow-hidden' : 'overflow-y-auto'} ${showNav ? 'pb-24' : ''}`}>
+      <main className={`flex-1 min-h-0 no-scrollbar relative ${isFixedPage ? 'overflow-hidden' : 'overflow-y-auto'} ${showNav ? 'pb-24' : ''}`}>
         {children}
       </main>
 

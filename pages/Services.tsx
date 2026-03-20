@@ -24,6 +24,18 @@ const Services: React.FC = () => {
     }
   }, [viewMode, setMapInstance]);
 
+  // Map view үед body scroll lock
+  useEffect(() => {
+    if (viewMode === 'map') {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [viewMode]);
+
   useEffect(() => {
     // Load both guides and providers
     Promise.all([
