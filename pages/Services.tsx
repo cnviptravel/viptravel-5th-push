@@ -4,6 +4,7 @@ import { User, UserRole } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useMap } from '../contexts/MapContext';
+import mapboxgl from 'mapbox-gl';
 
 // Lazy load the EnhancedMapView component
 const EnhancedMapView = lazy(() => import('../components/EnhancedMapView'));
@@ -69,7 +70,10 @@ const Services: React.FC = () => {
   const [roleFilter, setRoleFilter] = useState<'all' | 'guide' | 'provider'>('all');
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const { setMapInstance } = useMap();
+  const { setMapInstance, mapInstance } = useMap();
+  const [tripPlans, setTripPlans] = useState<(any|null)[]>([null, null, null]);
+  const [activeTripTab, setActiveTripTab] = useState<number | null>(null);
+  const tripMarkersRef = React.useRef<mapboxgl.Marker[]>([]);
 
   // Map instance management - clear map instance when leaving map view
   useEffect(() => {
@@ -89,6 +93,21 @@ const Services: React.FC = () => {
       document.body.style.overflow = '';
     };
   }, [viewMode]);
+
+  // Profile-аас trip plan хүлээж авах
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { plan, tabIndex } = (e as CustomEvent).detail;
+      setTripPlans(prev => {
+        const updated = [...prev];
+        updated[tabIndex] = plan;
+        return updated;
+      });
+      setActiveTripTab(tabIndex);
+    };
+    window.addEventListener('trip-plan-add', handler);
+    return () => window.removeEventListener('trip-plan-add', handler);
+  }, []);
 
   useEffect(() => {
     // Load both guides and providers
@@ -112,6 +131,77 @@ const Services: React.FC = () => {
       setServices(allServices.filter(u => u.role === UserRole.Provider));
     }
   }, [roleFilter, allServices]);
+
+  // Trip plan markers + route зурах
+  useEffect(() => {
+    // Хуучин markers цэвэрлэх
+    tripMarkersRef.current.forEach(m => m.remove());
+    tripMarkersRef.current = [];
+
+    if (activeTripTab === null || !tripPlans[activeTripTab] || !mapInstance) return;
+    const plan = tripPlans[activeTripTab];
+    const stops = plan.stops as any[];
+
+    // Markers нэмэх
+    stops.forEach((stop, i) => {
+      const el = document.createElement('div');
+      el.style.cssText = `
+        width:28px;height:28px;border-radius:50%;
+        background:#f97316;color:#fff;
+        font-size:12px;font-weight:700;
+        display:flex;align-items:center;justify-content:center;
+        border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.3);
+        cursor:pointer;
+      `;
+      el.textContent = String(i + 1);
+      const marker = new mapboxgl.Marker({ element: el })
+        .setLngLat([stop.lng, stop.lat])
+        .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(
+          `<div style="font-size:13px;font-weight:700;margin-bottom:4px">${stop.name}</div>
+           <div style="font-size:11px;color:#666">${stop.day}-р өдөр</div>
+           ${stop.distanceFromPrevKm > 0
+             ? `<div style="font-size:11px;color:#f97316;margin-top:4px">📍 ${stop.distanceFromPrevKm} км · ~${Math.round(stop.travelTimeMin / 60 * 10) / 10} цаг</div>`
+             : ''}`
+        ))
+        .addTo(mapInstance);
+      tripMarkersRef.current.push(marker);
+    });
+
+    // Route source/layer нэмэх
+    const sourceId = 'trip-route';
+    const layerId = 'trip-route-layer';
+    if (mapInstance.getLayer(layerId)) mapInstance.removeLayer(layerId);
+    if (mapInstance.getSource(sourceId)) mapInstance.removeSource(sourceId);
+
+    mapInstance.addSource(sourceId, {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: stops.map((s: any) => [s.lng, s.lat]),
+        },
+        properties: {},
+      },
+    });
+    mapInstance.addLayer({
+      id: layerId,
+      type: 'line',
+      source: sourceId,
+      paint: { 'line-color': '#f97316', 'line-width': 3, 'line-dasharray': [2, 1] },
+    });
+
+    // FlyTo — бүх stops багтах zoom
+    if (stops.length > 0) {
+      const lngs = stops.map((s: any) => s.lng);
+      const lats = stops.map((s: any) => s.lat);
+      mapInstance.flyTo({
+        center: [(Math.min(...lngs) + Math.max(...lngs)) / 2, (Math.min(...lats) + Math.max(...lats)) / 2],
+        zoom: 6.5,
+        duration: 1400,
+      });
+    }
+  }, [activeTripTab, tripPlans, mapInstance]);
 
   return (
     <div className="p-4 pb-24 h-full flex flex-col">
@@ -299,7 +389,25 @@ const Services: React.FC = () => {
             {/* Map + Saved pins list wrapper */}
             <div className="flex flex-col h-full gap-0">
               {/* Map - flex-1 авна */}
-              <div className="flex-1 min-h-0">
+              <div className="flex-1 min-h-0 relative">
+                {/* Trip план табууд — map-ын дээд хэсгийн overlay */}
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex gap-2">
+                  {[0, 1, 2].map(i => (
+                    <button
+                      key={i}
+                      onClick={() => setActiveTripTab(activeTripTab === i ? null : i)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold shadow-lg transition-all ${
+                        activeTripTab === i
+                          ? 'bg-primary text-white scale-105'
+                          : tripPlans[i]
+                            ? 'bg-white dark:bg-slate-800 text-primary border-2 border-primary'
+                            : 'bg-white/80 dark:bg-slate-800/80 text-slate-400'
+                      }`}
+                    >
+                      {tripPlans[i] ? `📍 Төлөвлөгөө ${i + 1}` : `Төлөвлөгөө ${i + 1}`}
+                    </button>
+                  ))}
+                </div>
                 <Suspense fallback={
                   <div className="w-full h-full rounded-3xl bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
                     <div className="text-center">
@@ -317,6 +425,51 @@ const Services: React.FC = () => {
                   />
                 </Suspense>
               </div>
+
+              {/* Идэвхтэй trip plan-ы stop жагсаалт */}
+              {activeTripTab !== null && tripPlans[activeTripTab] && (
+                <div className="shrink-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 max-h-48 overflow-y-auto">
+                  <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <p className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                      {tripPlans[activeTripTab].title}
+                    </p>
+                    <button onClick={() => setActiveTripTab(null)} className="text-slate-400">
+                      <span className="material-symbols-outlined text-lg">close</span>
+                    </button>
+                  </div>
+                  <div className="divide-y divide-slate-50 dark:divide-slate-800">
+                    {tripPlans[activeTripTab].stops.map((stop: any, i: number) => (
+                      <div
+                        key={i}
+                        className="flex items-start gap-2 px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                        onClick={() => mapInstance?.flyTo({ center: [stop.lng, stop.lat], zoom: 13, duration: 900 })}
+                      >
+                        <div className="w-6 h-6 rounded-full bg-primary text-white text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                          {i + 1}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold dark:text-white">{stop.name}</span>
+                            <span className="text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded-full">
+                              {stop.day}-р өдөр
+                            </span>
+                            {stop.distanceFromPrevKm > 0 && (
+                              <span className="text-[10px] text-orange-500 font-bold">
+                                {stop.distanceFromPrevKm} км · {stop.travelTimeMin >= 60
+                                  ? `${Math.floor(stop.travelTimeMin / 60)}ц ${stop.travelTimeMin % 60}м`
+                                  : `${stop.travelTimeMin} мин`}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2">
+                            {stop.description}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Доод хэсэг — хадгалагдсан тэмдэглэгээнүүд */}
               <SavedPinsList />

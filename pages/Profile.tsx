@@ -59,6 +59,8 @@ const Profile: React.FC = () => {
   const [aiBudget, setAiBudget] = useState('Standard');
   const [aiResult, setAiResult] = useState('');
   const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [aiParsedPlan, setAiParsedPlan] = useState<any>(null);
+  const [aiSendingToMap, setAiSendingToMap] = useState(false);
 
   // Profile edit sheet state
   const [showEditSheet, setShowEditSheet] = useState(false);
@@ -205,14 +207,82 @@ const Profile: React.FC = () => {
   const handleGeneratePlan = async () => {
       if (!aiDestination || !aiDuration) return;
       setIsAiGenerating(true);
+      setAiParsedPlan(null);
+      setAiSendingToMap(false);
       try {
-          const plan = await apiGenerateTripPlan(aiDestination, aiDuration, aiBudget, t('language_name') || 'English');
-          setAiResult(plan);
-      } catch (error) { 
-          setAiResult("Error generating plan."); 
-      } finally { 
-          setIsAiGenerating(false); 
+          // JSON формат хүсэх prompt
+          const jsonPrompt = `You are a professional travel planner for Mongolia.
+Create a detailed trip plan for: "${aiDestination}", duration: ${aiDuration} days, budget: ${aiBudget}.
+Respond ONLY with valid JSON, no markdown, no explanation:
+{
+  "title": "short trip title",
+  "summary": "2-3 sentence overview",
+  "stops": [
+    {
+      "name": "Place name in Mongolian",
+      "description": "Why visit, what to do (2-3 sentences)",
+      "lat": 47.9221,
+      "lng": 106.9155,
+      "day": 1,
+      "distanceFromPrevKm": 0,
+      "travelTimeMin": 0
+    }
+  ]
+}
+IMPORTANT: lat/lng must be real accurate GPS coordinates. stops count: 4-8.
+distanceFromPrevKm = road distance in km from previous stop (0 for first stop).
+travelTimeMin = estimated travel time in minutes from previous stop (0 for first stop).`;
+
+          const response = await fetch('https://viptravel-backend.erdneebatulzii23.workers.dev/ai/plan', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  destination: aiDestination,
+                  duration: aiDuration,
+                  budget: aiBudget,
+                  language: t('language_name') || 'English',
+                  format: 'json',
+                  prompt: jsonPrompt,
+              }),
+          });
+          const data = await response.json() as any;
+          const raw = data.plan || data;
+
+          // JSON parse
+          let parsed: any = null;
+          if (typeof raw === 'string') {
+              const match = raw.match(/\{[\s\S]*\}/);
+              if (match) { try { parsed = JSON.parse(match[0]); } catch { parsed = null; } }
+          } else if (typeof raw === 'object' && raw?.stops) {
+              parsed = raw;
+          }
+
+          if (parsed?.stops && Array.isArray(parsed.stops)) {
+              setAiParsedPlan(parsed);
+              // Текст хэлбэрээр ч харуулах (хуучин aiResult хэвээр)
+              const textPlan = parsed.stops.map((s: any, i: number) =>
+                  `${i + 1}. ${s.name} (${s.day}-р өдөр)` +
+                  (s.distanceFromPrevKm > 0 ? ` — өмнөхөөс ${s.distanceFromPrevKm} км, ~${s.travelTimeMin} мин` : '') +
+                  `\n   ${s.description}`
+              ).join('\n\n');
+              setAiResult(`${parsed.title}\n\n${parsed.summary}\n\n---\n\n${textPlan}`);
+          } else {
+              setAiResult(typeof raw === 'string' ? raw : 'Төлөвлөгөө үүсгэхэд алдаа гарлаа.');
+          }
+      } catch (error) {
+          setAiResult('Алдаа гарлаа. Дахин оролдоно уу.');
+      } finally {
+          setIsAiGenerating(false);
       }
+  };
+
+  const handleSendPlanToMap = (tabIndex: number) => {
+      if (!aiParsedPlan) return;
+      setAiSendingToMap(true);
+      window.dispatchEvent(new CustomEvent('trip-plan-add', {
+          detail: { plan: aiParsedPlan, tabIndex }
+      }));
+      navigate('/services');
   };
 
   // --- Cover Photo upload ---
@@ -618,7 +688,37 @@ const Profile: React.FC = () => {
                       </div>
                       <button onClick={handleGeneratePlan} disabled={isAiGenerating} className="w-full bg-primary text-white font-extrabold py-4 rounded-2xl shadow-xl">{isAiGenerating ? "..." : t('generate_plan')}</button>
                   </div>
-                  {aiResult && <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800"><h4 className="font-extrabold text-sm dark:text-white mb-4">{t('itinerary')}:</h4><div className="bg-slate-50 dark:bg-slate-800/80 p-5 rounded-3xl text-sm whitespace-pre-wrap">{aiResult}</div></div>}
+                  {aiResult && (
+                      <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800">
+                          <h4 className="font-extrabold text-sm dark:text-white mb-4">{t('itinerary')}:</h4>
+                          <div className="bg-slate-50 dark:bg-slate-800/80 p-5 rounded-3xl text-sm whitespace-pre-wrap dark:text-slate-200">{aiResult}</div>
+
+                          {/* Газрын зураг руу нэмэх — зөвхөн JSON parse амжилттай бол */}
+                          {aiParsedPlan && (
+                              <div className="mt-5 bg-amber-50 dark:bg-amber-950/40 rounded-2xl p-4 border-2 border-amber-300 dark:border-amber-700">
+                                  <p className="font-bold text-sm text-amber-800 dark:text-amber-300 mb-3">
+                                      📍 Газрын зураг дээр харах уу?
+                                  </p>
+                                  <p className="text-xs text-amber-600 dark:text-amber-400 mb-4">
+                                      Аль аяллын төлөвлөгөөний слот руу нэмэх вэ?
+                                  </p>
+                                  <div className="flex gap-2">
+                                      {[0, 1, 2].map(i => (
+                                          <button
+                                              key={i}
+                                              onClick={() => handleSendPlanToMap(i)}
+                                              disabled={aiSendingToMap}
+                                              className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-1 active:scale-95 transition-transform"
+                                          >
+                                              <span className="material-symbols-outlined text-base">map</span>
+                                              {i + 1}
+                                          </button>
+                                      ))}
+                                  </div>
+                              </div>
+                          )}
+                      </div>
+                  )}
               </div>
           )}
 
