@@ -348,9 +348,37 @@ const Services: React.FC = () => {
             )}
           </div>
       ) : (
-         <div className="flex flex-col gap-4 flex-1 h-full">
-            {/* Role Filter Buttons */}
-            <div className="flex gap-2 shrink-0">
+         <div className="flex flex-col gap-2 flex-1 h-full">
+            {/* AI Аялал Төлөвлөгөө + Role Filter — нэг эгнээнд */}
+            <div className="flex flex-col gap-2 shrink-0">
+
+              {/* Мөр 1: AI Trip Plan табууд */}
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                <div className="flex items-center gap-1 shrink-0 bg-primary/10 rounded-lg px-2 py-1">
+                  <span className="material-symbols-outlined text-primary text-sm">auto_awesome</span>
+                  <span className="text-[10px] font-bold text-primary uppercase tracking-wide whitespace-nowrap">AI план</span>
+                </div>
+                {[0, 1, 2].map(i => (
+                  <button
+                    key={i}
+                    onClick={() => setActiveTripTab(activeTripTab === i ? null : i)}
+                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                      activeTripTab === i
+                        ? 'bg-primary text-white border-primary shadow-md'
+                        : tripPlans[i]
+                          ? 'bg-white dark:bg-slate-800 text-primary border-primary'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-transparent'
+                    }`}
+                  >
+                    {tripPlans[i]
+                      ? `📍 ${(tripPlans[i].title || '').slice(0, 8) || `Төлөвлөгөө ${i + 1}`}`
+                      : `+ Төлөвлөгөө ${i + 1}`}
+                  </button>
+                ))}
+              </div>
+
+              {/* Мөр 2: Role Filter */}
+              <div className="flex gap-2">
                 <button
                     onClick={() => setRoleFilter('guide')}
                     className={`flex-1 py-2 px-4 rounded-xl font-bold text-sm transition-all ${
@@ -385,29 +413,12 @@ const Services: React.FC = () => {
                     All
                 </button>
             </div>
+            </div>{/* End of AI план + filter wrapper */}
 
             {/* Map + Saved pins list wrapper */}
             <div className="flex flex-col h-full gap-0">
-              {/* Map - flex-1 авна */}
-              <div className="flex-1 min-h-0 relative">
-                {/* Trip план табууд — map-ын дээд хэсгийн overlay */}
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex gap-2">
-                  {[0, 1, 2].map(i => (
-                    <button
-                      key={i}
-                      onClick={() => setActiveTripTab(activeTripTab === i ? null : i)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold shadow-lg transition-all ${
-                        activeTripTab === i
-                          ? 'bg-primary text-white scale-105'
-                          : tripPlans[i]
-                            ? 'bg-white dark:bg-slate-800 text-primary border-2 border-primary'
-                            : 'bg-white/80 dark:bg-slate-800/80 text-slate-400'
-                      }`}
-                    >
-                      {tripPlans[i] ? `📍 Төлөвлөгөө ${i + 1}` : `Төлөвлөгөө ${i + 1}`}
-                    </button>
-                  ))}
-                </div>
+              {/* Map */}
+              <div className="flex-1 min-h-0">
                 <Suspense fallback={
                   <div className="w-full h-full rounded-3xl bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
                     <div className="text-center">

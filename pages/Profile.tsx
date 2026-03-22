@@ -57,9 +57,13 @@ const Profile: React.FC = () => {
   const [aiDestination, setAiDestination] = useState('');
   const [aiDuration, setAiDuration] = useState('');
   const [aiBudget, setAiBudget] = useState('Standard');
-  const [aiResult, setAiResult] = useState('');
+  const [aiResult, setAiResult] = useState<string>(() => {
+    try { return localStorage.getItem('vt_ai_result') || ''; } catch { return ''; }
+  });
   const [isAiGenerating, setIsAiGenerating] = useState(false);
-  const [aiParsedPlan, setAiParsedPlan] = useState<any>(null);
+  const [aiParsedPlan, setAiParsedPlan] = useState<any>(() => {
+    try { return JSON.parse(localStorage.getItem('vt_ai_parsed_plan') || 'null'); } catch { return null; }
+  });
   const [aiSendingToMap, setAiSendingToMap] = useState(false);
 
   // Profile edit sheet state
@@ -208,9 +212,9 @@ const Profile: React.FC = () => {
       if (!aiDestination || !aiDuration) return;
       setIsAiGenerating(true);
       setAiParsedPlan(null);
+      localStorage.removeItem('vt_ai_parsed_plan');
       setAiSendingToMap(false);
       try {
-          // JSON формат хүсэх prompt
           const jsonPrompt = `You are a professional travel planner for Mongolia.
 Create a detailed trip plan for: "${aiDestination}", duration: ${aiDuration} days, budget: ${aiBudget}.
 Respond ONLY with valid JSON, no markdown, no explanation:
@@ -248,7 +252,6 @@ travelTimeMin = estimated travel time in minutes from previous stop (0 for first
           const data = await response.json() as any;
           const raw = data.plan || data;
 
-          // JSON parse
           let parsed: any = null;
           if (typeof raw === 'string') {
               const match = raw.match(/\{[\s\S]*\}/);
@@ -259,18 +262,24 @@ travelTimeMin = estimated travel time in minutes from previous stop (0 for first
 
           if (parsed?.stops && Array.isArray(parsed.stops)) {
               setAiParsedPlan(parsed);
-              // Текст хэлбэрээр ч харуулах (хуучин aiResult хэвээр)
+              try { localStorage.setItem('vt_ai_parsed_plan', JSON.stringify(parsed)); } catch {}
               const textPlan = parsed.stops.map((s: any, i: number) =>
                   `${i + 1}. ${s.name} (${s.day}-р өдөр)` +
                   (s.distanceFromPrevKm > 0 ? ` — өмнөхөөс ${s.distanceFromPrevKm} км, ~${s.travelTimeMin} мин` : '') +
                   `\n   ${s.description}`
               ).join('\n\n');
-              setAiResult(`${parsed.title}\n\n${parsed.summary}\n\n---\n\n${textPlan}`);
+              const fullText = `${parsed.title}\n\n${parsed.summary}\n\n---\n\n${textPlan}`;
+              setAiResult(fullText);
+              try { localStorage.setItem('vt_ai_result', fullText); } catch {}
           } else {
-              setAiResult(typeof raw === 'string' ? raw : 'Төлөвлөгөө үүсгэхэд алдаа гарлаа.');
+              const fallback = typeof raw === 'string' ? raw : 'Төлөвлөгөө үүсгэхэд алдаа гарлаа.';
+              setAiResult(fallback);
+              try { localStorage.setItem('vt_ai_result', fallback); } catch {}
           }
       } catch (error) {
-          setAiResult('Алдаа гарлаа. Дахин оролдоно уу.');
+          const errMsg = 'Алдаа гарлаа. Дахин оролдоно уу.';
+          setAiResult(errMsg);
+          try { localStorage.setItem('vt_ai_result', errMsg); } catch {}
       } finally {
           setIsAiGenerating(false);
       }

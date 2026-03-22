@@ -10,6 +10,7 @@ import { useSnackbar } from '../contexts/SnackbarContext';
 
 const Feed: React.FC = () => {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [isFeedLoading, setIsFeedLoading] = useState(true);
   const { showSnackbar } = useSnackbar();
   const [filteredPosts, setFilteredPosts] = useState<Post[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,6 +27,7 @@ const Feed: React.FC = () => {
   const navigate = useNavigate();
 
   const loadPosts = async () => {
+    setIsFeedLoading(true);
     try {
       const data = await apiGetPosts();
       setPosts(data);
@@ -53,6 +55,8 @@ const Feed: React.FC = () => {
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsFeedLoading(false);
     }
   };
 
@@ -229,7 +233,11 @@ const Feed: React.FC = () => {
 
       {/* Posts Feed */}
       <div className="max-w-2xl mx-auto px-4 py-4">
-        {filteredPosts.length === 0 ? (
+        {isFeedLoading ? (
+          <div className="flex justify-center py-20">
+            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
+          </div>
+        ) : filteredPosts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <span className="material-symbols-outlined text-6xl text-slate-300 dark:text-slate-700 mb-4">post_add</span>
             <p className="text-slate-400 font-medium">{searchQuery ? t('no_results') : t('no_posts')}</p>
@@ -237,7 +245,7 @@ const Feed: React.FC = () => {
         ) : (
           <div className="space-y-4">
             {filteredPosts.map(post => {
-              const isLiked = post.likes.includes(auth.user?._id || '');
+              const isLiked = (post.likes || []).includes(auth.user?._id || '');
               const isSaved = auth.user?.savedPostIds?.includes(post._id);
               const isOwner = auth.user?._id === post.userId;
 
@@ -338,10 +346,10 @@ const Feed: React.FC = () => {
                   {/* Like/Comment Count */}
                   <div className="px-4 py-3 flex items-center justify-between text-sm text-slate-500">
                     <button className="hover:underline">
-                      {post.likes.length > 0 && (
+                      {(post.likes || []).length > 0 && (
                         <span className="flex items-center gap-1">
                           <span className="text-red-500">❤️</span>
-                          {post.likes.length}
+                          {(post.likes || []).length}
                         </span>
                       )}
                     </button>
