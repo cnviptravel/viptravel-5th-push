@@ -52,12 +52,10 @@ export async function handleCreatePost(request: Request, env: Env): Promise<Resp
         '[]'
     ).run();
     
-    const createdAt = new Date().toISOString();
-    return new Response(JSON.stringify({ 
-        success: true, 
-        postId, 
+    // Real-time: Feed дээр байгаа бүх хэрэглэгчдэд шинэ пост илгээх
+    const newPost = {
         _id: postId,
-        createdAt,
+        id: postId,
         userId: body.userId,
         userName: body.userName,
         userPic: body.userPic,
@@ -69,9 +67,15 @@ export async function handleCreatePost(request: Request, env: Env): Promise<Resp
         serviceTitle: body.serviceTitle || null,
         price: body.price || null,
         capacity: body.capacity || null,
+        createdAt: Date.now(),
+        created_at: Date.now(),
         likes: [],
-        comments: []
-    }), { headers: corsHeaders });
+        comments: [],
+    };
+    // @ts-ignore ctx may not be typed here
+    try { await triggerPusher(env, 'global-feed', 'new-post', newPost); } catch (_) {}
+
+    return new Response(JSON.stringify({ success: true, postId, _id: postId }), { headers: corsHeaders });
 }
 
 /**

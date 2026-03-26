@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState, useContext, useRef } from 'react';
+import Pusher from 'pusher-js';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiGetPosts, apiLikePost, apiCommentPost, apiDeletePost, apiToggleSavePost } from '../services/api';
 import { Post, UserRole, Comment } from '../types';
@@ -10,7 +11,6 @@ import { useSnackbar } from '../contexts/SnackbarContext';
 
 const Feed: React.FC = () => {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [isFeedLoading, setIsFeedLoading] = useState(true);
   const { showSnackbar } = useSnackbar();
   const [filteredPosts, setFilteredPosts] = useState<Post[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,8 +26,35 @@ const Feed: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // Real-time: Pusher-р шинэ пост хүлээн авах
+  useEffect(() => {
+    const pusher = new Pusher('37cb2c72dc3de4f325bb', { cluster: 'ap1' });
+    const channel = pusher.subscribe('global-feed');
+
+    channel.bind('new-post', (newPost: Post) => {
+      setPosts(prev => {
+        // Давхардсан бол нэмэхгүй
+        if (prev.some(p => p._id === newPost._id)) return prev;
+        return [newPost, ...prev];
+      });
+      setFilteredPosts(prev => {
+        if (prev.some(p => p._id === newPost._id)) return prev;
+        return [newPost, ...prev];
+      });
+      setLocalComments(prev => ({
+        ...prev,
+        [newPost._id]: newPost.comments || [],
+      }));
+    });
+
+    return () => {
+      channel.unbind_all();
+      pusher.unsubscribe('global-feed');
+      pusher.disconnect();
+    };
+  }, []);
+
   const loadPosts = async () => {
-    setIsFeedLoading(true);
     try {
       const data = await apiGetPosts();
       setPosts(data);
@@ -55,43 +82,12 @@ const Feed: React.FC = () => {
       }
     } catch (err) {
       console.error(err);
-    } finally {
-      setIsFeedLoading(false);
     }
   };
 
   useEffect(() => {
     loadPosts();
   }, [location.search]);
-
-  // Шинэ пост шуурхай нэмэх (refresh хийхгүй)
-  useEffect(() => {
-    (window as any).__onNewPost = (newPost: Post) => {
-      setPosts(prev => [newPost, ...prev]);
-      setFilteredPosts(prev => [newPost, ...prev]);
-      setLocalComments(prev => ({ ...prev, [newPost._id]: [] }));
-    };
-    (window as any).__addOptimisticPost = (tempPost: any) => {
-      setPosts(prev => [tempPost, ...prev]);
-      setFilteredPosts(prev => [tempPost, ...prev]);
-      setLocalComments(prev => ({ ...prev, [tempPost._id]: [] }));
-    };
-    (window as any).__replaceOptimisticPost = (tempId: string, realPost: Post) => {
-      setPosts(prev => prev.map(p => p._id === tempId ? realPost : p));
-      setFilteredPosts(prev => prev.map(p => p._id === tempId ? realPost : p));
-      setLocalComments(prev => ({ ...prev, [realPost._id]: prev[tempId] || [] }));
-    };
-    (window as any).__removeOptimisticPost = (tempId: string) => {
-      setPosts(prev => prev.filter(p => p._id !== tempId));
-      setFilteredPosts(prev => prev.filter(p => p._id !== tempId));
-    };
-    return () => {
-      delete (window as any).__onNewPost;
-      delete (window as any).__addOptimisticPost;
-      delete (window as any).__replaceOptimisticPost;
-      delete (window as any).__removeOptimisticPost;
-    };
-  }, []);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -233,11 +229,7 @@ const Feed: React.FC = () => {
 
       {/* Posts Feed */}
       <div className="max-w-2xl mx-auto px-4 py-4">
-        {isFeedLoading ? (
-          <div className="flex justify-center py-20">
-            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
-          </div>
-        ) : filteredPosts.length === 0 ? (
+        {filteredPosts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <span className="material-symbols-outlined text-6xl text-slate-300 dark:text-slate-700 mb-4">post_add</span>
             <p className="text-slate-400 font-medium">{searchQuery ? t('no_results') : t('no_posts')}</p>
@@ -245,18 +237,12 @@ const Feed: React.FC = () => {
         ) : (
           <div className="space-y-4">
             {filteredPosts.map(post => {
-              const isLiked = (post.likes || []).includes(auth.user?._id || '');
+              const isLiked = post.likes.includes(auth.user?._id || '');
               const isSaved = auth.user?.savedPostIds?.includes(post._id);
               const isOwner = auth.user?._id === post.userId;
 
               return (
                 <div id={`post-${post._id}`} key={post._id} className="bg-white dark:bg-slate-900 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-sm">
-                  {(post as any)._isOptimistic && (
-                    <div className="flex items-center gap-2 px-4 pt-3 text-xs text-slate-400">
-                      <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                      <span>Uploading...</span>
-                    </div>
-                  )}
                   {/* Post Header */}
                   <div className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate(`/profile/${post.userId}`)}>
@@ -346,10 +332,10 @@ const Feed: React.FC = () => {
                   {/* Like/Comment Count */}
                   <div className="px-4 py-3 flex items-center justify-between text-sm text-slate-500">
                     <button className="hover:underline">
-                      {(post.likes || []).length > 0 && (
+                      {post.likes.length > 0 && (
                         <span className="flex items-center gap-1">
                           <span className="text-red-500">❤️</span>
-                          {(post.likes || []).length}
+                          {post.likes.length}
                         </span>
                       )}
                     </button>
