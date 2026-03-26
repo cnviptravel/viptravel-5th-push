@@ -52,7 +52,26 @@ export async function handleCreatePost(request: Request, env: Env): Promise<Resp
         '[]'
     ).run();
     
-    return new Response(JSON.stringify({ success: true, postId, _id: postId }), { headers: corsHeaders });
+    const createdAt = new Date().toISOString();
+    return new Response(JSON.stringify({ 
+        success: true, 
+        postId, 
+        _id: postId,
+        createdAt,
+        userId: body.userId,
+        userName: body.userName,
+        userPic: body.userPic,
+        userRole: body.userRole,
+        text: body.text,
+        image: body.image || null,
+        video: body.video || null,
+        type: body.type || 'regular',
+        serviceTitle: body.serviceTitle || null,
+        price: body.price || null,
+        capacity: body.capacity || null,
+        likes: [],
+        comments: []
+    }), { headers: corsHeaders });
 }
 
 /**

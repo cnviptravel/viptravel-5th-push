@@ -117,7 +117,18 @@ const CreatePost: React.FC = () => {
       const realPost = await apiCreatePost(postData);
       const replace = (window as any).__replaceOptimisticPost;
       if (replace && realPost?._id) {
-        replace(tempId, { ...realPost, _id: realPost._id || (realPost as any).id });
+        // optimisticPost-ын бүх талбарыг хадгалж, зөвхөн _id болон createdAt-г шинэчлэх
+        // Ингэснээр API undefined буцаасан ч userName, text, image г.м. алдагдахгүй
+        const safeRealFields = Object.fromEntries(
+          Object.entries(realPost).filter(([_, v]) => v !== undefined && v !== null)
+        );
+        replace(tempId, { 
+          ...optimisticPost,
+          ...safeRealFields,
+          _id: realPost._id || (realPost as any).id,
+          createdAt: realPost.createdAt || optimisticPost.createdAt,
+          _isOptimistic: false,
+        });
       }
     } catch (err) {
       showSnackbar("Пост илгээхэд алдаа гарлаа", 'error');
