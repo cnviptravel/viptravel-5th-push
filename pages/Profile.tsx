@@ -212,19 +212,20 @@ const Profile: React.FC = () => {
       if (!aiDestination || !aiDuration) return;
       setIsAiGenerating(true);
       setAiParsedPlan(null);
-      localStorage.removeItem('vt_ai_parsed_plan');
+      setAiResult('');
+      try { localStorage.removeItem('vt_ai_parsed_plan'); localStorage.removeItem('vt_ai_result'); } catch {}
       setAiSendingToMap(false);
-      try {
-          const jsonPrompt = `You are a professional travel planner for Mongolia.
-Create a detailed trip plan for: "${aiDestination}", duration: ${aiDuration} days, budget: ${aiBudget}.
-Respond ONLY with valid JSON, no markdown, no explanation:
+
+      const systemPrompt = `You are an expert Mongolian travel planner with deep knowledge of Mongolia's geography, nature, and tourism.
+You MUST respond ONLY with a valid JSON object. No markdown, no explanation, no text before or after the JSON.
+The JSON must have this exact structure:
 {
-  "title": "short trip title",
-  "summary": "2-3 sentence overview",
+  "title": "short trip title in Mongolian",
+  "summary": "2-3 sentence overview in Mongolian",
   "stops": [
     {
-      "name": "Place name in Mongolian",
-      "description": "Why visit, what to do (2-3 sentences)",
+      "name": "Газрын нэр монголоор",
+      "description": "Яагаад зочлох хэрэгтэй, юу хийх вэ (2-3 өгүүлбэр)",
       "lat": 47.9221,
       "lng": 106.9155,
       "day": 1,
@@ -233,53 +234,83 @@ Respond ONLY with valid JSON, no markdown, no explanation:
     }
   ]
 }
-IMPORTANT: lat/lng must be real accurate GPS coordinates. stops count: 4-8.
-distanceFromPrevKm = road distance in km from previous stop (0 for first stop).
-travelTimeMin = estimated travel time in minutes from previous stop (0 for first stop).`;
+CRITICAL RULES:
+- lat/lng must be REAL, ACCURATE GPS coordinates for actual places in Mongolia
+- stops: 4 to 8 stops total
+- distanceFromPrevKm: road distance in km from previous stop (0 for first stop)
+- travelTimeMin: estimated drive time in minutes (0 for first stop)
+- All text in Mongolian language
+- Return ONLY the JSON, nothing else`;
 
-          const response = await fetch('https://viptravel-backend.erdneebatulzii23.workers.dev/ai/plan', {
+      const userMessage = `Create a ${aiDuration}-day trip plan to: "${aiDestination}", budget: ${aiBudget}.`;
+
+      try {
+          // Try Anthropic API directly
+          const response = await fetch('https://api.anthropic.com/v1/messages', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                  'Content-Type': 'application/json',
+                  'anthropic-version': '2023-06-01',
+                  'anthropic-dangerous-direct-browser-access': 'true',
+              },
               body: JSON.stringify({
-                  destination: aiDestination,
-                  duration: aiDuration,
-                  budget: aiBudget,
-                  language: t('language_name') || 'English',
-                  format: 'json',
-                  prompt: jsonPrompt,
+                  model: 'claude-haiku-4-5-20251001',
+                  max_tokens: 2048,
+                  system: systemPrompt,
+                  messages: [{ role: 'user', content: userMessage }],
               }),
           });
-          const data = await response.json() as any;
-          const raw = data.plan || data;
 
-          let parsed: any = null;
-          if (typeof raw === 'string') {
-              const match = raw.match(/\{[\s\S]*\}/);
-              if (match) { try { parsed = JSON.parse(match[0]); } catch { parsed = null; } }
-          } else if (typeof raw === 'object' && raw?.stops) {
-              parsed = raw;
+          if (!response.ok) {
+              // Fallback to backend
+              throw new Error(`Anthropic API error: ${response.status}`);
           }
 
-          if (parsed?.stops && Array.isArray(parsed.stops)) {
+          const data = await response.json() as any;
+          const rawText = data?.content?.[0]?.text || '';
+
+          // Extract JSON from response
+          let parsed: any = null;
+          // Try direct parse first
+          try { parsed = JSON.parse(rawText.trim()); } catch {}
+          // Try extracting JSON block
+          if (!parsed) {
+              const match = rawText.match(/\{[\s\S]*\}/);
+              if (match) { try { parsed = JSON.parse(match[0]); } catch {} }
+          }
+
+          if (parsed?.stops && Array.isArray(parsed.stops) && parsed.stops.length > 0) {
               setAiParsedPlan(parsed);
               try { localStorage.setItem('vt_ai_parsed_plan', JSON.stringify(parsed)); } catch {}
-              const textPlan = parsed.stops.map((s: any, i: number) =>
-                  `${i + 1}. ${s.name} (${s.day}-р өдөр)` +
-                  (s.distanceFromPrevKm > 0 ? ` — өмнөхөөс ${s.distanceFromPrevKm} км, ~${s.travelTimeMin} мин` : '') +
-                  `\n   ${s.description}`
-              ).join('\n\n');
-              const fullText = `${parsed.title}\n\n${parsed.summary}\n\n---\n\n${textPlan}`;
-              setAiResult(fullText);
-              try { localStorage.setItem('vt_ai_result', fullText); } catch {}
+              setAiResult(parsed.title);
+              try { localStorage.setItem('vt_ai_result', parsed.title); } catch {}
           } else {
-              const fallback = typeof raw === 'string' ? raw : 'Төлөвлөгөө үүсгэхэд алдаа гарлаа.';
-              setAiResult(fallback);
-              try { localStorage.setItem('vt_ai_result', fallback); } catch {}
+              showSnackbar('Төлөвлөгөөний формат буруу байна. Дахин оролдоно уу.', 'error');
           }
-      } catch (error) {
-          const errMsg = 'Алдаа гарлаа. Дахин оролдоно уу.';
-          setAiResult(errMsg);
-          try { localStorage.setItem('vt_ai_result', errMsg); } catch {}
+      } catch (err: any) {
+          console.error('Trip plan generation error:', err);
+          // Fallback: try backend
+          try {
+              const backendRes = await fetch('https://viptravel-backend.erdneebatulzii23.workers.dev/ai/plan', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ destination: aiDestination, duration: aiDuration, budget: aiBudget, language: 'Mongolian' }),
+              });
+              const backendData = await backendRes.json() as any;
+              const raw = backendData.plan || '';
+              let parsed: any = null;
+              const match = (typeof raw === 'string' ? raw : JSON.stringify(raw)).match(/\{[\s\S]*\}/);
+              if (match) { try { parsed = JSON.parse(match[0]); } catch {} }
+              if (parsed?.stops?.length) {
+                  setAiParsedPlan(parsed);
+                  try { localStorage.setItem('vt_ai_parsed_plan', JSON.stringify(parsed)); } catch {}
+                  setAiResult(parsed.title);
+              } else {
+                  showSnackbar('Алдаа гарлаа. Дахин оролдоно уу.', 'error');
+              }
+          } catch {
+              showSnackbar('Сүлжээний алдаа гарлаа. Дахин оролдоно уу.', 'error');
+          }
       } finally {
           setIsAiGenerating(false);
       }
@@ -687,45 +718,292 @@ travelTimeMin = estimated travel time in minutes from previous stop (0 for first
           )}
 
           {activeTab === 'ai_planner' && (
-              <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-xl border border-slate-100 dark:border-slate-800 animate-slide-up">
-                  <h3 className="font-extrabold text-xl dark:text-white mb-4">{t('ai_planner')}</h3>
-                  <div className="space-y-4">
-                      <input value={aiDestination} onChange={e => setAiDestination(e.target.value)} placeholder={t('where_to_travel')} className="w-full bg-slate-50 dark:bg-slate-800 rounded-2xl p-4 text-sm outline-none dark:text-white" />
-                      <div className="grid grid-cols-2 gap-3">
-                          <input type="number" value={aiDuration} onChange={e => setAiDuration(e.target.value)} placeholder={t('days')} className="w-full bg-slate-50 dark:bg-slate-800 rounded-2xl p-4 text-sm outline-none dark:text-white" />
-                          <select value={aiBudget} onChange={e => setAiBudget(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-800 rounded-2xl p-4 text-sm outline-none dark:text-white"><option value="Economic">{t('budget_economic')}</option><option value="Standard">{t('budget_standard')}</option><option value="Luxury">{t('budget_luxury')}</option></select>
+              <div className="space-y-5 animate-slide-up">
+                  {/* Header */}
+                  <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-500 rounded-3xl p-6 shadow-2xl">
+                      <div className="absolute inset-0 opacity-10" style={{backgroundImage: 'radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1px, transparent 1px)', backgroundSize: '40px 40px'}}></div>
+                      <div className="relative z-10">
+                          <div className="flex items-center gap-3 mb-2">
+                              <div className="w-10 h-10 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center">
+                                  <span className="material-symbols-outlined text-white text-xl">auto_awesome</span>
+                              </div>
+                              <div>
+                                  <h3 className="font-black text-white text-lg leading-tight">{t('ai_planner')}</h3>
+                                  <p className="text-white/70 text-xs font-medium">AI-аар аяллын төлөвлөгөө гарга</p>
+                              </div>
+                          </div>
                       </div>
-                      <button onClick={handleGeneratePlan} disabled={isAiGenerating} className="w-full bg-primary text-white font-extrabold py-4 rounded-2xl shadow-xl">{isAiGenerating ? "..." : t('generate_plan')}</button>
                   </div>
-                  {aiResult && (
-                      <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800">
-                          <h4 className="font-extrabold text-sm dark:text-white mb-4">{t('itinerary')}:</h4>
-                          <div className="bg-slate-50 dark:bg-slate-800/80 p-5 rounded-3xl text-sm whitespace-pre-wrap dark:text-slate-200">{aiResult}</div>
 
-                          {/* Газрын зураг руу нэмэх — зөвхөн JSON parse амжилттай бол */}
-                          {aiParsedPlan && (
-                              <div className="mt-5 bg-amber-50 dark:bg-amber-950/40 rounded-2xl p-4 border-2 border-amber-300 dark:border-amber-700">
-                                  <p className="font-bold text-sm text-amber-800 dark:text-amber-300 mb-3">
-                                      📍 Газрын зураг дээр харах уу?
-                                  </p>
-                                  <p className="text-xs text-amber-600 dark:text-amber-400 mb-4">
-                                      Аль аяллын төлөвлөгөөний слот руу нэмэх вэ?
-                                  </p>
-                                  <div className="flex gap-2">
-                                      {[0, 1, 2].map(i => (
-                                          <button
-                                              key={i}
-                                              onClick={() => handleSendPlanToMap(i)}
-                                              disabled={aiSendingToMap}
-                                              className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-1 active:scale-95 transition-transform"
-                                          >
-                                              <span className="material-symbols-outlined text-base">map</span>
-                                              {i + 1}
-                                          </button>
-                                      ))}
+                  {/* Input Form */}
+                  <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-lg border border-slate-100 dark:border-slate-800">
+                      <div className="space-y-3">
+                          <div className="relative">
+                              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-base">location_on</span>
+                              <input
+                                  value={aiDestination}
+                                  onChange={e => setAiDestination(e.target.value)}
+                                  placeholder={t('where_to_travel')}
+                                  className="w-full bg-slate-50 dark:bg-slate-800 rounded-2xl pl-11 pr-4 py-4 text-sm outline-none dark:text-white font-medium border border-transparent focus:border-blue-300 dark:focus:border-blue-600 transition-colors"
+                              />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                              <div className="relative">
+                                  <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">calendar_today</span>
+                                  <input
+                                      type="number"
+                                      value={aiDuration}
+                                      onChange={e => setAiDuration(e.target.value)}
+                                      placeholder={t('days')}
+                                      className="w-full bg-slate-50 dark:bg-slate-800 rounded-2xl pl-11 pr-4 py-4 text-sm outline-none dark:text-white font-medium border border-transparent focus:border-blue-300 transition-colors"
+                                  />
+                              </div>
+                              <div className="relative">
+                                  <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">wallet</span>
+                                  <select
+                                      value={aiBudget}
+                                      onChange={e => setAiBudget(e.target.value)}
+                                      className="w-full bg-slate-50 dark:bg-slate-800 rounded-2xl pl-11 pr-4 py-4 text-sm outline-none dark:text-white font-medium appearance-none border border-transparent focus:border-blue-300 transition-colors"
+                                  >
+                                      <option value="Economic">{t('budget_economic')}</option>
+                                      <option value="Standard">{t('budget_standard')}</option>
+                                      <option value="Luxury">{t('budget_luxury')}</option>
+                                  </select>
+                              </div>
+                          </div>
+                          <button
+                              onClick={handleGeneratePlan}
+                              disabled={isAiGenerating || !aiDestination || !aiDuration}
+                              className="w-full relative overflow-hidden bg-gradient-to-r from-blue-600 to-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                          >
+                              {isAiGenerating ? (
+                                  <>
+                                      <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
+                                      <span className="text-sm">Төлөвлөгөө гаргаж байна...</span>
+                                  </>
+                              ) : (
+                                  <>
+                                      <span className="material-symbols-outlined text-base">auto_awesome</span>
+                                      <span className="text-sm">{t('generate_plan')}</span>
+                                  </>
+                              )}
+                          </button>
+                      </div>
+                  </div>
+
+                  {/* Results Section */}
+                  {aiParsedPlan && (
+                      <div className="space-y-4">
+                          {/* Trip Title & Summary */}
+                          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-lg border border-slate-100 dark:border-slate-800">
+                              <div className="flex items-start gap-3">
+                                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shrink-0 shadow-md">
+                                      <span className="material-symbols-outlined text-white text-lg">travel_explore</span>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                      <h4 className="font-black text-slate-900 dark:text-white text-base leading-tight">{aiParsedPlan.title}</h4>
+                                      <p className="text-slate-500 dark:text-slate-400 text-xs mt-1.5 leading-relaxed">{aiParsedPlan.summary}</p>
+                                  </div>
+                              </div>
+                              {/* Quick stats */}
+                              <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                                  <div className="text-center">
+                                      <p className="font-black text-blue-600 text-lg">{aiDuration}</p>
+                                      <p className="text-[10px] text-slate-400 font-bold uppercase">Өдөр</p>
+                                  </div>
+                                  <div className="text-center border-x border-slate-100 dark:border-slate-800">
+                                      <p className="font-black text-blue-600 text-lg">{aiParsedPlan.stops?.length || 0}</p>
+                                      <p className="text-[10px] text-slate-400 font-bold uppercase">Зогсоол</p>
+                                  </div>
+                                  <div className="text-center">
+                                      <p className="font-black text-blue-600 text-lg">{aiBudget === 'Luxury' ? '💎' : aiBudget === 'Economic' ? '💰' : '⭐'}</p>
+                                      <p className="text-[10px] text-slate-400 font-bold uppercase">{aiBudget}</p>
+                                  </div>
+                              </div>
+                          </div>
+
+                          {/* Mini Static Map Preview */}
+                          {aiParsedPlan.stops && aiParsedPlan.stops.length > 0 && (
+                              <div className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden shadow-lg border border-slate-100 dark:border-slate-800">
+                                  <div className="relative">
+                                      {/* OpenStreetMap static map via overpass bbox */}
+                                      {(() => {
+                                          const stops = aiParsedPlan.stops;
+                                          const lats = stops.map((s: any) => s.lat);
+                                          const lngs = stops.map((s: any) => s.lng);
+                                          const minLat = Math.min(...lats) - 0.5;
+                                          const maxLat = Math.max(...lats) + 0.5;
+                                          const minLng = Math.min(...lngs) - 0.5;
+                                          const maxLng = Math.max(...lngs) + 0.5;
+                                          const centerLat = (minLat + maxLat) / 2;
+                                          const centerLng = (minLng + maxLng) / 2;
+                                          // Use OpenStreetMap tile-based static map
+                                          const zoom = 6;
+                                          const mapUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${minLng},${minLat},${maxLng},${maxLat}&layer=mapnik&marker=${centerLat},${centerLng}`;
+                                          return (
+                                              <div className="relative">
+                                                  <div className="absolute top-3 left-3 z-10 bg-white dark:bg-slate-900 rounded-xl px-3 py-1.5 shadow-md border border-slate-100 dark:border-slate-700">
+                                                      <p className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
+                                                          <span className="material-symbols-outlined text-blue-500 text-xs">map</span>
+                                                          Маршрут
+                                                      </p>
+                                                  </div>
+                                                  <iframe
+                                                      src={mapUrl}
+                                                      width="100%"
+                                                      height="200"
+                                                      style={{border: 0, display: 'block'}}
+                                                      title="Trip Map"
+                                                      loading="lazy"
+                                                  />
+                                                  <div className="absolute bottom-3 right-3 z-10">
+                                                      <button
+                                                          onClick={() => handleSendPlanToMap(0)}
+                                                          disabled={aiSendingToMap}
+                                                          className="bg-blue-600 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-lg flex items-center gap-1.5 active:scale-95 transition-transform"
+                                                      >
+                                                          <span className="material-symbols-outlined text-sm">open_in_new</span>
+                                                          Дэлгэрэнгүй зураг
+                                                      </button>
+                                                  </div>
+                                              </div>
+                                          );
+                                      })()}
                                   </div>
                               </div>
                           )}
+
+                          {/* Day-by-day Stops */}
+                          <div className="space-y-3">
+                              <h4 className="font-black text-slate-800 dark:text-white text-sm uppercase tracking-wider px-1 flex items-center gap-2">
+                                  <span className="material-symbols-outlined text-blue-500 text-base">route</span>
+                                  Аяллын маршрут
+                              </h4>
+                              {aiParsedPlan.stops?.map((stop: any, i: number) => {
+                                  // Generate nature image for location using Unsplash
+                                  const photoQuery = encodeURIComponent(`${stop.name} Mongolia nature landscape`);
+                                  const photoUrl = `https://source.unsplash.com/400x200/?${photoQuery}&sig=${i}`;
+                                  const isLast = i === aiParsedPlan.stops.length - 1;
+                                  return (
+                                      <div key={i} className="relative">
+                                          {/* Connector line */}
+                                          {!isLast && (
+                                              <div className="absolute left-[22px] top-[64px] w-0.5 h-8 bg-gradient-to-b from-blue-300 to-transparent z-10"></div>
+                                          )}
+                                          <div className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden shadow-md border border-slate-100 dark:border-slate-800 active:scale-[0.99] transition-transform">
+                                              {/* Nature photo */}
+                                              <div className="relative h-36 overflow-hidden bg-slate-100 dark:bg-slate-800">
+                                                  <img
+                                                      src={photoUrl}
+                                                      alt={stop.name}
+                                                      className="w-full h-full object-cover"
+                                                      onError={(e) => {
+                                                          // Fallback gradient if image fails
+                                                          (e.target as HTMLImageElement).style.display = 'none';
+                                                      }}
+                                                  />
+                                                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
+                                                  {/* Day badge */}
+                                                  <div className="absolute top-3 left-3">
+                                                      <span className="bg-blue-600 text-white text-[10px] font-black px-2.5 py-1 rounded-full shadow-md">
+                                                          {stop.day}-р өдөр
+                                                      </span>
+                                                  </div>
+                                                  {/* Stop number */}
+                                                  <div className="absolute top-3 right-3">
+                                                      <div className="w-7 h-7 bg-white/90 backdrop-blur rounded-full flex items-center justify-center shadow-md">
+                                                          <span className="text-blue-700 font-black text-xs">{i + 1}</span>
+                                                      </div>
+                                                  </div>
+                                                  {/* Location name overlay */}
+                                                  <div className="absolute bottom-3 left-3 right-3">
+                                                      <p className="text-white font-black text-base leading-tight drop-shadow-md">{stop.name}</p>
+                                                  </div>
+                                              </div>
+                                              {/* Stop details */}
+                                              <div className="p-4">
+                                                  <p className="text-slate-600 dark:text-slate-400 text-xs leading-relaxed">{stop.description}</p>
+                                                  {/* Travel info from previous */}
+                                                  {stop.distanceFromPrevKm > 0 && (
+                                                      <div className="flex items-center gap-3 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                                                          <div className="flex items-center gap-1 text-slate-400">
+                                                              <span className="material-symbols-outlined text-xs">directions_car</span>
+                                                              <span className="text-[11px] font-bold">{stop.distanceFromPrevKm} км</span>
+                                                          </div>
+                                                          <div className="w-px h-3 bg-slate-200 dark:bg-slate-700"></div>
+                                                          <div className="flex items-center gap-1 text-slate-400">
+                                                              <span className="material-symbols-outlined text-xs">schedule</span>
+                                                              <span className="text-[11px] font-bold">~{stop.travelTimeMin >= 60 ? `${Math.floor(stop.travelTimeMin/60)}ц ${stop.travelTimeMin%60}м` : `${stop.travelTimeMin} мин`}</span>
+                                                          </div>
+                                                          <div className="ml-auto">
+                                                              <div className="flex items-center gap-1">
+                                                                  <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
+                                                                  <div className="w-3 h-px bg-blue-200"></div>
+                                                                  <div className="w-1.5 h-1.5 bg-blue-600 rounded-full"></div>
+                                                              </div>
+                                                          </div>
+                                                      </div>
+                                                  )}
+                                                  {/* Coordinates */}
+                                                  <div className="flex items-center gap-1 mt-2">
+                                                      <span className="material-symbols-outlined text-slate-300 text-xs">my_location</span>
+                                                      <span className="text-[10px] text-slate-300 dark:text-slate-600 font-mono">{stop.lat?.toFixed(4)}, {stop.lng?.toFixed(4)}</span>
+                                                  </div>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  );
+                              })}
+                          </div>
+
+                          {/* Send to Full Map */}
+                          <div className="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-950/40 dark:to-blue-950/40 rounded-3xl p-5 border-2 border-indigo-200 dark:border-indigo-800">
+                              <div className="flex items-center gap-3 mb-3">
+                                  <span className="material-symbols-outlined text-indigo-500 text-xl">map</span>
+                                  <div>
+                                      <p className="font-black text-sm text-indigo-800 dark:text-indigo-300">Газрын зураг дээр харах</p>
+                                      <p className="text-xs text-indigo-500 dark:text-indigo-400">Аяллын слот сонго</p>
+                                  </div>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                  {[0, 1, 2].map(i => (
+                                      <button
+                                          key={i}
+                                          onClick={() => handleSendPlanToMap(i)}
+                                          disabled={aiSendingToMap}
+                                          className="py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-sm rounded-2xl flex flex-col items-center justify-center gap-1 active:scale-95 transition-all shadow-md shadow-indigo-500/20"
+                                      >
+                                          <span className="material-symbols-outlined text-base">map</span>
+                                          <span className="text-[10px]">Слот {i + 1}</span>
+                                      </button>
+                                  ))}
+                              </div>
+                          </div>
+
+                          {/* Reset */}
+                          <button
+                              onClick={() => { setAiResult(''); setAiParsedPlan(null); try { localStorage.removeItem('vt_ai_result'); localStorage.removeItem('vt_ai_parsed_plan'); } catch {} }}
+                              className="w-full py-3 text-slate-400 dark:text-slate-600 text-xs font-bold flex items-center justify-center gap-1.5 hover:text-slate-600 dark:hover:text-slate-400 transition-colors"
+                          >
+                              <span className="material-symbols-outlined text-sm">refresh</span>
+                              Шинэ төлөвлөгөө гаргах
+                          </button>
+                      </div>
+                  )}
+
+                  {/* Empty state with loading skeleton */}
+                  {isAiGenerating && !aiParsedPlan && (
+                      <div className="space-y-3">
+                          {[1, 2, 3].map(i => (
+                              <div key={i} className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden shadow-md border border-slate-100 dark:border-slate-800 animate-pulse">
+                                  <div className="h-36 bg-slate-100 dark:bg-slate-800"></div>
+                                  <div className="p-4 space-y-2">
+                                      <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded-full w-3/4"></div>
+                                      <div className="h-3 bg-slate-50 dark:bg-slate-800/50 rounded-full w-full"></div>
+                                      <div className="h-3 bg-slate-50 dark:bg-slate-800/50 rounded-full w-5/6"></div>
+                                  </div>
+                              </div>
+                          ))}
                       </div>
                   )}
               </div>
