@@ -3,6 +3,7 @@ import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'reac
 import Layout from './components/Layout';
 import { AuthState, User, UserRole } from './types';
 import Login from './pages/Login';
+import Landing from './pages/Landing';
 import Register from './pages/Register';
 import RoleSelection from './pages/RoleSelection';
 import Feed from './pages/Feed';
@@ -428,22 +429,24 @@ const AppContent: React.FC = () => {
           {auth.isAuthenticated && <PersistentServices />}
 
           <Routes>
+            {/* Landing page for unauthenticated users, Feed for authenticated */}
+            <Route path="/" element={auth.isAuthenticated ? <Feed /> : <Landing />} />
+            
             <Route path="/login" element={!auth.isAuthenticated ? <Login /> : <Navigate to="/" />} />
             <Route path="/role-select" element={!auth.isAuthenticated ? <RoleSelection /> : <Navigate to="/" />} />
             <Route path="/register/:role" element={!auth.isAuthenticated ? <Register /> : <Navigate to="/" />} />
             
-            <Route path="/" element={auth.isAuthenticated ? <Feed /> : <Navigate to="/login" />} />
-            <Route path="/create" element={auth.isAuthenticated ? <CreatePost /> : <Navigate to="/login" />} />
-            <Route path="/profile" element={auth.isAuthenticated ? <Profile /> : <Navigate to="/login" />} />
-            <Route path="/profile/:userId" element={auth.isAuthenticated ? <PublicProfile /> : <Navigate to="/login" />} />
+            <Route path="/create" element={auth.isAuthenticated ? <CreatePost /> : <Navigate to="/" />} />
+            <Route path="/profile" element={auth.isAuthenticated ? <Profile /> : <Navigate to="/" />} />
+            <Route path="/profile/:userId" element={auth.isAuthenticated ? <PublicProfile /> : <Navigate to="/" />} />
             {/* /services route-г Routes-аас устгах — PersistentServices үүнийг орлоно */}
-            <Route path="/services" element={auth.isAuthenticated ? null : <Navigate to="/login" />} />
-            <Route path="/live" element={auth.isAuthenticated ? <Live /> : <Navigate to="/login" />} />
+            <Route path="/services" element={auth.isAuthenticated ? null : <Navigate to="/" />} />
+            <Route path="/live" element={auth.isAuthenticated ? <Live /> : <Navigate to="/" />} />
             
-            <Route path="/chats" element={auth.isAuthenticated ? <ChatList /> : <Navigate to="/login" />} />
-            <Route path="/chat/:userId" element={auth.isAuthenticated ? <ChatDetail /> : <Navigate to="/login" />} />
+            <Route path="/chats" element={auth.isAuthenticated ? <ChatList /> : <Navigate to="/" />} />
+            <Route path="/chat/:userId" element={auth.isAuthenticated ? <ChatDetail /> : <Navigate to="/" />} />
             
-            <Route path="/translator" element={auth.isAuthenticated ? <Translator /> : <Navigate to="/login" />} />
+            <Route path="/translator" element={auth.isAuthenticated ? <Translator /> : <Navigate to="/" />} />
             
             <Route path="/admin" element={auth.isAuthenticated && (auth.user?.role === UserRole.Admin || auth.user?.isAdmin) ? <AdminPanel /> : <Navigate to="/" />} />
             
