@@ -39,7 +39,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [cpPrice, setCpPrice] = useState('');
   const [cpCapacity, setCpCapacity] = useState('');
 
-  const showNav = !['/login', '/role-select', '/translator'].includes(location.pathname) 
+  // Landing хуудас: "/" замд нэвтрээгүй хэрэглэгч байгаа үед header/footer нуух
+  const isLandingPage = location.pathname === '/' && !auth.isAuthenticated;
+
+  const showNav = !isLandingPage
+                  && !['/login', '/role-select', '/translator'].includes(location.pathname) 
                   && !location.pathname.startsWith('/register')
                   && !location.pathname.startsWith('/chat/'); 
 
