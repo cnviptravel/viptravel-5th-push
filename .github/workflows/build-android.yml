@@ -32,7 +32,6 @@ jobs:
 
       - name: Init and add Android platform
         run: |
-          npx cap init "VIP Travel" "com.viptravel.app" --web-dir dist || true
           npx cap add android || true
           npx cap sync android
 
