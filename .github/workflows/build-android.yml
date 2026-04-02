@@ -25,12 +25,14 @@ jobs:
       - name: Build web app
         run: npm run build
 
-      - name: Install Capacitor CLI
-        run: npm install -g @capacitor/cli
-
-      - name: Add Android platform
+      - name: Install Capacitor
         run: |
-          npm install @capacitor/core @capacitor/android
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install -g @capacitor/cli
+
+      - name: Init and add Android platform
+        run: |
+          npx cap init "VIP Travel" "com.viptravel.app" --web-dir dist || true
           npx cap add android || true
           npx cap sync android
 
