@@ -44,20 +44,26 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # Энэ хэсэгт Keystore-оор гарын үсэг зурж Release APK/AAB гаргана
       - name: Build Release APK
         run: |
           cd android
           ./gradlew assembleRelease
-        env:
-          MYAPP_RELEASE_STORE_FILE: ${{ secrets.RELEASE_STORE_FILE }}
-          MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
-      - name: Upload Release APK
+      # Энэ хэсэгт APK-д албан ёсоор гарын үсэг зурна
+      - name: Sign Android Release
+        uses: r0adkll/sign-android-release@v1
+        id: sign_app
+        with:
+          releaseDirectory: android/app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.RELEASE_STORE_FILE }}
+          alias: ${{ secrets.RELEASE_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.RELEASE_KEY_PASSWORD }}
+
+      # Гарын үсэг зурагдсан APK-г татаж авахаар байршуулна
+      - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: viptravel-release.apk
-          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+          name: viptravel-signed-release.apk
+          path: ${{ steps.sign_app.outputs.signedReleaseFile }}
           retention-days: 7
