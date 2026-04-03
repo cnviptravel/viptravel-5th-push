@@ -16,13 +16,8 @@ const ProfileEditSheet: React.FC<ProfileEditSheetProps> = ({ user, onClose, onSa
   const { showSnackbar } = useSnackbar();
   const [isSaving, setIsSaving] = useState(false);
   const [activeSection, setActiveSection] = useState<'basic' | 'details' | 'social' | 'privacy'>('basic');
-  
-  // Default translations fallback
-  const getTranslation = (key: string, fallback: string) => {
-    const translation = t(key);
-    return translation === key ? fallback : translation;
-  };
-  
+
+  // formData-ийн төрлийг тодорхой зааж өгснөөр алдаанаас сэргийлнэ
   const [formData, setFormData] = useState({
     name: user.name || '',
     email: user.email || '',
@@ -54,14 +49,8 @@ const ProfileEditSheet: React.FC<ProfileEditSheetProps> = ({ user, onClose, onSa
   const [isUploadingCover, setIsUploadingCover] = useState(false);
 
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'auto';
-    }
-    return () => {
-      document.body.style.overflow = 'auto';
-    };
+    document.body.style.overflow = isOpen ? 'hidden' : 'auto';
+    return () => { document.body.style.overflow = 'auto'; };
   }, [isOpen]);
 
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -70,9 +59,8 @@ const ProfileEditSheet: React.FC<ProfileEditSheetProps> = ({ user, onClose, onSa
       try {
         const url = await apiUploadMedia(e.target.files[0]);
         setProfilePic(url);
-      } catch (err) {
-        console.error(err);
-        showSnackbar("Error uploading image.", 'error');
+      } catch {
+        showSnackbar('Зураг оруулахад алдаа гарлаа.', 'error');
       } finally {
         setIsUploadingProfilePic(false);
       }
@@ -85,8 +73,8 @@ const ProfileEditSheet: React.FC<ProfileEditSheetProps> = ({ user, onClose, onSa
       try {
         const url = await apiUploadMedia(e.target.files[0]);
         setCoverPhoto(url);
-      } catch (err) {
-        showSnackbar("Cover photo upload failed", 'error');
+      } catch {
+        showSnackbar('Ковер зураг оруулахад алдаа гарлаа.', 'error');
       } finally {
         setIsUploadingCover(false);
       }
@@ -96,44 +84,34 @@ const ProfileEditSheet: React.FC<ProfileEditSheetProps> = ({ user, onClose, onSa
   const handleSave = async () => {
     setIsSaving(true);
     try {
+      // .map(s: string => ...) гэж төрлийг нь зааж өгснөөр "Implicit Any" алдаа арилна
       const updateData: any = {
         name: formData.name,
         phone: formData.phone,
-        profilePic: profilePic,
+        profilePic,
         bio: formData.bio,
         nationality: formData.nationality,
         experience: formData.experience,
-        visitedPlaces: formData.visitedPlaces.split(',').map(s => s.trim()),
-        languages: formData.languages.split(',').map(s => s.trim()),
+        visitedPlaces: formData.visitedPlaces.split(',').map((s: string) => s.trim()).filter(Boolean),
+        languages: formData.languages.split(',').map((s: string) => s.trim()).filter(Boolean),
         serviceDescription: formData.serviceDescription,
         website: formData.website,
         operatingHours: formData.operatingHours,
-        coverPhoto: coverPhoto,
+        coverPhoto,
         location: {
           lat: formData.lat || user.location?.lat || 0,
           lng: formData.lng || user.location?.lng || 0,
-          address: formData.address
-        }
-      };
-
-      // Add hobbies if exists
-      if (formData.hobbies) {
-        updateData.hobbies = formData.hobbies.split(',').map(s => s.trim());
-      }
-
-      // Add privacy settings
-      updateData.privacy = {
-        showEmail: privacySettings.showEmail,
-        showPhone: privacySettings.showPhone,
-        showOnlineStatus: privacySettings.showOnlineStatus,
-        showHobbies: privacySettings.showHobbies,
+          address: formData.address,
+        },
+        hobbies: formData.hobbies.split(',').map((s: string) => s.trim()).filter(Boolean),
+        privacy: privacySettings,
       };
 
       const updatedUser = await apiUpdateProfile(user._id, updateData);
       onSave(updatedUser);
+      showSnackbar('Профайл амжилттай хадгалагдлаа!', 'success');
       onClose();
-    } catch (error) {
-      console.error('Error saving profile:', error);
+    } catch {
       showSnackbar('Профайл хадгалахад алдаа гарлаа.', 'error');
     } finally {
       setIsSaving(false);
@@ -142,362 +120,342 @@ const ProfileEditSheet: React.FC<ProfileEditSheetProps> = ({ user, onClose, onSa
 
   if (!isOpen) return null;
 
+  const tabs = [
+    { key: 'basic', label: 'Үндсэн', icon: 'person' },
+    { key: 'details', label: 'Дэлгэрэнгүй', icon: 'work' },
+    { key: 'social', label: 'Холбоос', icon: 'link' },
+    { key: 'privacy', label: 'Нууцлал', icon: 'lock' },
+  ] as const;
+
+  const inputClass = "w-full bg-slate-50 dark:bg-slate-800 rounded-xl px-4 py-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary focus:ring-2 focus:ring-primary/10 transition-all placeholder:text-slate-400";
+  const labelClass = "block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5";
+
+  const PrivacyToggle = ({ label, desc, checked, onChange }: { label: string; desc: string; checked: boolean; onChange: (v: boolean) => void }) => (
+    <div className="flex items-center justify-between p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-700 hover:border-slate-200 transition-colors">
+      <div>
+        <p className="font-semibold text-sm dark:text-white">{label}</p>
+        <p className="text-[11px] text-slate-400 mt-0.5">{desc}</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${checked ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'}`}
+      >
+        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${checked ? 'translate-x-5' : ''}`} />
+      </button>
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 z-[9999] flex items-end justify-center md:items-center md:justify-center">
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300"
+    <div className="fixed inset-0 z-[9999] flex items-end justify-center md:items-center">
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
       />
-      
-      {/* Sheet */}
-      <div 
-        className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-t-3xl md:rounded-3xl shadow-2xl max-h-[90vh] md:max-h-[85vh] overflow-hidden animate-slide-up"
-        onClick={(e) => e.stopPropagation()}
+
+      <div
+        className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-t-3xl md:rounded-3xl shadow-2xl max-h-[92vh] md:max-h-[88vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 px-6 py-4 flex items-center justify-between">
+        <div className="flex justify-center pt-3 pb-1 md:hidden">
+          <div className="w-10 h-1 rounded-full bg-slate-200 dark:bg-slate-700" />
+        </div>
+
+        <div className="px-6 py-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
           <div>
-            <h2 className="text-xl font-extrabold dark:text-white">{t('edit_profile')}</h2>
-            <p className="text-xs text-slate-500 mt-0.5">{t('edit_profile_desc')}</p>
+            <h2 className="text-lg font-bold dark:text-white">Профайл засах</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Мэдээллээ шинэчилнэ үү</p>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
-            <span className="material-symbols-outlined text-slate-500">close</span>
+            <span className="material-symbols-outlined text-slate-400" style={{ fontSize: 20 }}>close</span>
           </button>
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-100 dark:border-slate-800 px-6">
-          <button
-            onClick={() => setActiveSection('basic')}
-            className={`flex-1 py-3 text-sm font-bold transition-all ${activeSection === 'basic' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}
-          >
-            <span className="material-symbols-outlined text-base align-middle mr-2">person</span>
-            {t('basic_info')}
-          </button>
-          <button
-            onClick={() => setActiveSection('details')}
-            className={`flex-1 py-3 text-sm font-bold transition-all ${activeSection === 'details' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}
-          >
-            <span className="material-symbols-outlined text-base align-middle mr-2">work</span>
-            {t('details')}
-          </button>
-          <button
-            onClick={() => setActiveSection('social')}
-            className={`flex-1 py-3 text-sm font-bold transition-all ${activeSection === 'social' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}
-          >
-            <span className="material-symbols-outlined text-base align-middle mr-2">link</span>
-            {t('social')}
-          </button>
-          <button
-            onClick={() => setActiveSection('privacy')}
-            className={`flex-1 py-3 text-sm font-bold transition-all ${activeSection === 'privacy' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}
-          >
-            <span className="material-symbols-outlined text-base align-middle mr-2">lock</span>
-            Нууцлал
-          </button>
+        <div className="flex border-b border-slate-100 dark:border-slate-800 px-2">
+          {tabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveSection(tab.key)}
+              className={`flex-1 flex flex-col items-center gap-1 py-3 text-[11px] font-semibold transition-all ${
+                activeSection === tab.key
+                  ? 'text-primary border-b-2 border-primary'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+              }`}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        {/* Content */}
-        <div className="overflow-y-auto p-6 space-y-6" style={{ maxHeight: 'calc(90vh - 140px)' }}>
-          {/* Cover Photo */}
-          <div className="relative h-32 rounded-2xl overflow-hidden bg-gradient-to-br from-primary/20 to-blue-800/20">
-            {coverPhoto ? (
-              <img src={coverPhoto} className="w-full h-full object-cover" alt="Cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="material-symbols-outlined text-slate-300 text-4xl">landscape</span>
-              </div>
-            )}
-            <label className="absolute bottom-3 right-3 bg-black/60 text-white p-2.5 rounded-full cursor-pointer hover:bg-black/80 transition-colors shadow-lg">
-              {isUploadingCover ? (
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-              ) : (
-                <span className="material-symbols-outlined text-sm">photo_camera</span>
-              )}
-              <input type="file" className="hidden" accept="image/*" onChange={handleCoverPhotoChange} />
-            </label>
-          </div>
-
-          {/* Profile Picture */}
-          <div className="flex items-center gap-4 -mt-12 ml-6">
-            <div className="relative">
-              <img 
-                src={profilePic || 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png'} 
-                className="w-24 h-24 rounded-full border-4 border-white dark:border-slate-900 bg-slate-200 shadow-xl" 
-                alt="Profile" 
-              />
-              <label className="absolute bottom-1 right-1 bg-primary text-white p-2 rounded-full cursor-pointer shadow-lg border-2 border-white hover:bg-primary/80 transition-colors">
-                <span className="material-symbols-outlined text-xs">photo_camera</span>
-                <input type="file" className="hidden" accept="image/*" onChange={handleProfilePicChange} />
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-6 space-y-5">
+            <div className="relative h-28 rounded-2xl overflow-hidden bg-gradient-to-br from-primary/10 to-blue-500/10 border border-slate-100 dark:border-slate-800">
+              {coverPhoto
+                ? <img src={coverPhoto} className="w-full h-full object-cover" alt="Cover" />
+                : (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-1">
+                    <span className="material-symbols-outlined text-slate-300" style={{ fontSize: 28 }}>landscape</span>
+                    <span className="text-[10px] text-slate-300">Ковер зураг нэмэх</span>
+                  </div>
+                )
+              }
+              <label className="absolute bottom-2.5 right-2.5 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full cursor-pointer transition-colors">
+                {isUploadingCover
+                  ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : <span className="material-symbols-outlined" style={{ fontSize: 16 }}>photo_camera</span>
+                }
+                <input type="file" className="hidden" accept="image/*" onChange={handleCoverPhotoChange} />
               </label>
             </div>
-            <div>
-              <h3 className="font-bold text-lg dark:text-white">{user.name}</h3>
-              <p className="text-xs text-slate-500 font-bold uppercase">{t(user.role)}</p>
-            </div>
-          </div>
 
-          {/* Basic Info Section */}
-          {activeSection === 'basic' && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('full_name')}</label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({...formData, name: e.target.value})}
-                    className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary"
-                    placeholder={t('enter_full_name')}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('phone')}</label>
-                  <input
-                    type="tel"
-                    value={formData.phone}
-                    onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                    className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary"
-                    placeholder={t('enter_phone')}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('email')}</label>
-                <input
-                  type="email"
-                  value={formData.email}
-                  disabled
-                  className="w-full bg-slate-100 dark:bg-slate-800/50 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 opacity-70"
-                  placeholder={t('enter_email')}
+            <div className="flex items-end gap-4 -mt-14 ml-4">
+              <div className="relative flex-shrink-0">
+                <img
+                  src={profilePic || 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png'}
+                  className="w-20 h-20 rounded-2xl border-4 border-white dark:border-slate-900 bg-slate-200 shadow-lg object-cover"
+                  alt="Profile"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">{t('email_cannot_change')}</p>
+                <label className="absolute -bottom-1 -right-1 bg-primary text-white p-1.5 rounded-lg cursor-pointer border-2 border-white dark:border-slate-900 hover:bg-primary/90 transition-colors shadow">
+                  {isUploadingProfilePic
+                    ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    : <span className="material-symbols-outlined" style={{ fontSize: 13 }}>photo_camera</span>
+                  }
+                  <input type="file" className="hidden" accept="image/*" onChange={handleProfilePicChange} />
+                </label>
               </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('bio')}</label>
-                <textarea
-                  value={formData.bio}
-                  onChange={(e) => setFormData({...formData, bio: e.target.value})}
-                  className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary min-h-[80px]"
-                  placeholder={t('tell_about_yourself')}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('location')}</label>
-                <input
-                  value={formData.address}
-                  onChange={e => setFormData({...formData, address: e.target.value})}
-                  placeholder={t('enter_address')}
-                  className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Хаягаа оруулна уу (жишээ нь: Улаанбаатар, Сүхбаатар дүүрэг)</p>
+              <div className="pb-1">
+                <p className="font-bold text-base dark:text-white leading-tight">{user.name}</p>
+                <span className="inline-block text-[10px] font-semibold uppercase tracking-wider bg-primary/10 text-primary px-2 py-0.5 rounded-md mt-0.5">
+                  {user.role}
+                </span>
               </div>
             </div>
-          )}
 
-          {/* Details Section */}
-          {activeSection === 'details' && (
-            <div className="space-y-4">
-              {user.role === UserRole.Guide && (
-                <>
+            {activeSection === 'basic' && (
+              <div className="space-y-4 pt-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('experience')}</label>
-                    <textarea
-                      value={formData.experience}
-                      onChange={(e) => setFormData({...formData, experience: e.target.value})}
-                      className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary min-h-[80px]"
-                      placeholder={t('describe_experience')}
-                      rows={3}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('visited_places')}</label>
+                    <label className={labelClass}>Овог нэр</label>
                     <input
                       type="text"
-                      value={formData.visitedPlaces}
-                      onChange={(e) => setFormData({...formData, visitedPlaces: e.target.value})}
-                      className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary"
-                      placeholder={t('comma_separated_places')}
+                      value={formData.name}
+                      onChange={e => setFormData({ ...formData, name: e.target.value })}
+                      className={inputClass}
+                      placeholder="Таны бүтэн нэр"
                     />
-                    <p className="text-[10px] text-slate-400 mt-1">{t('visited_places_hint')}</p>
                   </div>
-                </>
-              )}
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('languages')}</label>
-                <input
-                  type="text"
-                  value={formData.languages}
-                  onChange={(e) => setFormData({...formData, languages: e.target.value})}
-                  className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary"
-                  placeholder={t('comma_separated_languages')}
-                />
-                <p className="text-[10px] text-slate-400 mt-1">{t('languages_hint')}</p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Хобби</label>
-                <input
-                  type="text"
-                  value={formData.hobbies}
-                  onChange={(e) => setFormData({...formData, hobbies: e.target.value})}
-                  className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary"
-                  placeholder="Жишээ нь: Уран зураг, Дуу, Аялал, Унших"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Таалагддаг зүйлсээ таслалаар тусгаарлан бичнэ үү</p>
-              </div>
-            </div>
-          )}
-
-          {/* Privacy Section */}
-          {activeSection === 'privacy' && (
-            <div className="space-y-4">
-              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4">
-                <h3 className="font-bold text-sm dark:text-white mb-3">Нууцлалын тохиргоо</h3>
-                <p className="text-xs text-slate-500 mb-4">Таны мэдээллийг хэн харахыг тохируулна уу</p>
-                
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700">
-                    <div>
-                      <p className="font-bold text-sm dark:text-white">Имэйл хаяг</p>
-                      <p className="text-[10px] text-slate-500">Таны имэйл хаягийг хэн харах</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        className="sr-only peer" 
-                        checked={privacySettings.showEmail}
-                        onChange={(e) => setPrivacySettings({...privacySettings, showEmail: e.target.checked})}
-                      />
-                      <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700">
-                    <div>
-                      <p className="font-bold text-sm dark:text-white">Утасны дугаар</p>
-                      <p className="text-[10px] text-slate-500">Таны утасны дугаарыг хэн харах</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        className="sr-only peer" 
-                        checked={privacySettings.showPhone}
-                        onChange={(e) => setPrivacySettings({...privacySettings, showPhone: e.target.checked})}
-                      />
-                      <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700">
-                    <div>
-                      <p className="font-bold text-sm dark:text-white">Онлайн статус</p>
-                      <p className="text-[10px] text-slate-500">Таны онлайн статусыг хэн харах</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        className="sr-only peer" 
-                        checked={privacySettings.showOnlineStatus}
-                        onChange={(e) => setPrivacySettings({...privacySettings, showOnlineStatus: e.target.checked})}
-                      />
-                      <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700">
-                    <div>
-                      <p className="font-bold text-sm dark:text-white">Хобби</p>
-                      <p className="text-[10px] text-slate-500">Таны хоббиг хэн харах</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        className="sr-only peer" 
-                        checked={privacySettings.showHobbies}
-                        onChange={(e) => setPrivacySettings({...privacySettings, showHobbies: e.target.checked})}
-                      />
-                      <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
+                  <div>
+                    <label className={labelClass}>Утасны дугаар</label>
+                    <input
+                      type="tel"
+                      value={formData.phone}
+                      onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                      className={inputClass}
+                      placeholder="+976 XXXX XXXX"
+                    />
                   </div>
                 </div>
-              </div>
-            </div>
-          )}
 
-          {/* Social Section */}
-          {activeSection === 'social' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('website')}</label>
-                <input
-                  type="url"
-                  value={formData.website}
-                  onChange={(e) => setFormData({...formData, website: e.target.value})}
-                  className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary"
-                  placeholder="https://example.com"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('operating_hours')}</label>
-                <input
-                  type="text"
-                  value={formData.operatingHours}
-                  onChange={(e) => setFormData({...formData, operatingHours: e.target.value})}
-                  className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary"
-                  placeholder="9:00 AM - 6:00 PM"
-                />
-              </div>
-
-              {(user.role === UserRole.Provider || user.role === UserRole.Guide) && (
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{t('service_description')}</label>
+                  <label className={labelClass}>Имэйл хаяг</label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    disabled
+                    className={`${inputClass} opacity-50 cursor-not-allowed`}
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>info</span>
+                    Имэйл хаягийг өөрчлөх боломжгүй
+                  </p>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Тухай</label>
                   <textarea
-                    value={formData.serviceDescription}
-                    onChange={(e) => setFormData({...formData, serviceDescription: e.target.value})}
-                    className="w-full bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm outline-none dark:text-white border border-slate-200 dark:border-slate-700 focus:border-primary min-h-[80px]"
-                    placeholder={t('describe_your_services')}
+                    value={formData.bio}
+                    onChange={e => setFormData({ ...formData, bio: e.target.value })}
+                    className={`${inputClass} min-h-[90px] resize-none`}
+                    placeholder="Өөрийгөө товч танилцуулаарай..."
                     rows={3}
                   />
                 </div>
-              )}
-            </div>
-          )}
+
+                <div>
+                  <label className={labelClass}>Байршил / Хаяг</label>
+                  <input
+                    value={formData.address}
+                    onChange={e => setFormData({ ...formData, address: e.target.value })}
+                    placeholder="Жишээ нь: Улаанбаатар, Сүхбаатар дүүрэг"
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+            )}
+
+            {activeSection === 'details' && (
+              <div className="space-y-4 pt-2">
+                {user.role === UserRole.Guide && (
+                  <>
+                    <div>
+                      <label className={labelClass}>Туршлага</label>
+                      <textarea
+                        value={formData.experience}
+                        onChange={e => setFormData({ ...formData, experience: e.target.value })}
+                        className={`${inputClass} min-h-[90px] resize-none`}
+                        placeholder="Аялалын гарын авлагын туршлагаа бичнэ үү..."
+                        rows={3}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Очсон газрууд</label>
+                      <input
+                        type="text"
+                        value={formData.visitedPlaces}
+                        onChange={e => setFormData({ ...formData, visitedPlaces: e.target.value })}
+                        className={inputClass}
+                        placeholder="Говь, Хөвсгөл, Алтай..."
+                      />
+                      <p className="text-[11px] text-slate-400 mt-1.5">Таслалаар тусгаарлан бичнэ үү</p>
+                    </div>
+                  </>
+                )}
+
+                <div>
+                  <label className={labelClass}>Ярьдаг хэлүүд</label>
+                  <input
+                    type="text"
+                    value={formData.languages}
+                    onChange={e => setFormData({ ...formData, languages: e.target.value })}
+                    className={inputClass}
+                    placeholder="Монгол, Англи, Хятад..."
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1.5">Таслалаар тусгаарлан бичнэ үү</p>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Хобби</label>
+                  <input
+                    type="text"
+                    value={formData.hobbies}
+                    onChange={e => setFormData({ ...formData, hobbies: e.target.value })}
+                    className={inputClass}
+                    placeholder="Уран зураг, Дуу, Аялал..."
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1.5">Таслалаар тусгаарлан бичнэ үү</p>
+                </div>
+              </div>
+            )}
+
+            {activeSection === 'social' && (
+              <div className="space-y-4 pt-2">
+                <div>
+                  <label className={labelClass}>Вэбсайт</label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2">
+                      <span className="material-symbols-outlined text-slate-400" style={{ fontSize: 16 }}>language</span>
+                    </span>
+                    <input
+                      type="url"
+                      value={formData.website}
+                      onChange={e => setFormData({ ...formData, website: e.target.value })}
+                      className={`${inputClass} pl-10`}
+                      placeholder="https://example.com"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Ажлын цаг</label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2">
+                      <span className="material-symbols-outlined text-slate-400" style={{ fontSize: 16 }}>schedule</span>
+                    </span>
+                    <input
+                      type="text"
+                      value={formData.operatingHours}
+                      onChange={e => setFormData({ ...formData, operatingHours: e.target.value })}
+                      className={`${inputClass} pl-10`}
+                      placeholder="09:00 - 18:00"
+                    />
+                  </div>
+                </div>
+
+                {(user.role === UserRole.Provider || user.role === UserRole.Guide) && (
+                  <div>
+                    <label className={labelClass}>Үйлчилгээний тайлбар</label>
+                    <textarea
+                      value={formData.serviceDescription}
+                      onChange={e => setFormData({ ...formData, serviceDescription: e.target.value })}
+                      className={`${inputClass} min-h-[90px] resize-none`}
+                      placeholder="Та ямар үйлчилгээ үзүүлдэг вэ..."
+                      rows={3}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeSection === 'privacy' && (
+              <div className="space-y-3 pt-2">
+                <div className="bg-primary/5 dark:bg-primary/10 rounded-2xl p-4 mb-4">
+                  <p className="text-sm font-semibold text-primary">Нууцлалын тохиргоо</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Таны мэдээллийг хэн харахыг удирдана уу</p>
+                </div>
+                <PrivacyToggle
+                  label="Имэйл хаяг"
+                  desc="Бусад хэрэглэгч таны имэйлийг харах эсэх"
+                  checked={privacySettings.showEmail}
+                  onChange={v => setPrivacySettings({ ...privacySettings, showEmail: v })}
+                />
+                <PrivacyToggle
+                  label="Утасны дугаар"
+                  desc="Бусад хэрэглэгч таны дугаарыг харах эсэх"
+                  checked={privacySettings.showPhone}
+                  onChange={v => setPrivacySettings({ ...privacySettings, showPhone: v })}
+                />
+                <PrivacyToggle
+                  label="Онлайн статус"
+                  desc="Таны онлайн байгаа эсэхийг харуулах"
+                  checked={privacySettings.showOnlineStatus}
+                  onChange={v => setPrivacySettings({ ...privacySettings, showOnlineStatus: v })}
+                />
+                <PrivacyToggle
+                  label="Хобби"
+                  desc="Таны хоббиг бусдад харуулах эсэх"
+                  checked={privacySettings.showHobbies}
+                  onChange={v => setPrivacySettings({ ...privacySettings, showHobbies: v })}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Footer */}
-        <div className="sticky bottom-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-6 py-4 flex gap-3">
+        <div className="border-t border-slate-100 dark:border-slate-800 px-6 py-4 flex gap-3 bg-white dark:bg-slate-900">
           <button
             onClick={onClose}
-            className="flex-1 py-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+            className="flex-1 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-sm"
           >
-            {t('cancel')}
+            Болих
           </button>
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="flex-1 py-3 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="flex-2 px-8 py-3 bg-primary text-white font-semibold rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm min-w-[140px]"
           >
             {isSaving ? (
               <>
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                {t('saving')}
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Хадгалж байна...
               </>
             ) : (
               <>
-                <span className="material-symbols-outlined text-base">save</span>
-                {t('save_changes')}
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>save</span>
+                Хадгалах
               </>
             )}
           </button>

@@ -386,6 +386,14 @@ const Register: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-white dark:bg-background-dark flex flex-col max-w-md mx-auto relative overflow-hidden font-sans">
+
+      {/* Буцах товч */}
+      <button 
+        onClick={() => navigate(-1)} 
+        className="absolute top-4 left-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md p-2 rounded-full text-slate-700 dark:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors z-10"
+      >
+        <span className="material-symbols-outlined">arrow_back</span>
+      </button>
        
        {/* --- HEADER --- */}
        <div className="w-full p-6 flex flex-col items-center">
@@ -628,8 +636,8 @@ const Register: React.FC = () => {
            
            <div className="mt-12 text-center">
                <p className="text-sm text-slate-500">
-                   Already have an account? {' '}
-                   <button onClick={() => navigate('/login')} className="text-primary font-bold hover:underline">Sign in</button>
+                   {t('already_account')} {' '}
+                   <button onClick={() => navigate('/login')} className="text-primary font-bold hover:underline">{t('login')}</button>
                </p>
            </div>
        </div>

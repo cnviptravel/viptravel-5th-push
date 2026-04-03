@@ -16,21 +16,15 @@ const RoleSelection: React.FC = () => {
   return (
     <div className="min-h-screen bg-background-light dark:bg-background-dark flex flex-col max-w-md mx-auto relative overflow-hidden">
       
-      {/* --- HEADER (LOGO ONLY) --- */}
-      <div className="w-full p-4 flex items-center">
-           {config.logoUrl ? (
-               <img 
-                  src={config.logoUrl} 
-                  alt="Icon" 
-                  className="w-10 h-10 object-contain rounded-lg" 
-               />
-           ) : (
-               <span className="material-symbols-outlined text-primary text-3xl">explore</span>
-           )}
-      </div>
-      {/* -------------------------- */}
+       {/* Буцах товч */}
+       <button 
+         onClick={() => navigate(-1)} 
+         className="absolute top-4 left-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md p-2 rounded-full text-slate-700 dark:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors z-10"
+       >
+         <span className="material-symbols-outlined">arrow_back</span>
+       </button>
 
-      <div className="flex-1 flex flex-col justify-center px-6 -mt-10">
+       <div className="flex-1 flex flex-col justify-center px-6 pt-10">
          <h2 className="text-2xl font-bold text-center mb-2 dark:text-white">{t('choose_role')}</h2>
          <p className="text-center text-slate-500 mb-8 text-sm">{t('how_will_use')}</p>
 

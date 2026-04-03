@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useSnackbar } from '../contexts/SnackbarContext';
 
@@ -126,6 +127,7 @@ const LangBtn: React.FC<{ code: string; name: string; flag: string; onPress: () 
 
 // ── Main Translator ───────────────────────────────────────
 const Translator: React.FC = () => {
+  const navigate = useNavigate();
   const { showSnackbar } = useSnackbar();
   const { language } = useLanguage();
 
@@ -339,7 +341,15 @@ const Translator: React.FC = () => {
   const botInfo = getLangInfo(botLang);
 
   return (
-    <div className="h-full flex flex-col bg-slate-100 dark:bg-background-dark overflow-hidden select-none">
+    <div className="h-full flex flex-col bg-slate-100 dark:bg-background-dark overflow-hidden select-none relative">
+
+      {/* Буцах товч */}
+      <button 
+        onClick={() => navigate(-1)} 
+        className="absolute top-4 left-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md p-2 rounded-full text-slate-700 dark:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors z-10"
+      >
+        <span className="material-symbols-outlined">arrow_back</span>
+      </button>
 
       {/* TOP HALF — эргүүлсэн (top person's view) */}
       <div

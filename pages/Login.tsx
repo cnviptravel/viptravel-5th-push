@@ -162,7 +162,15 @@ const Login: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-background-light dark:bg-background-dark p-6 flex flex-col justify-center items-center max-w-md mx-auto relative overflow-hidden">
-       
+
+      {/* Буцах товч */}
+      <button 
+        onClick={() => navigate(-1)} 
+        className="absolute top-4 left-4 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md p-2 rounded-full text-slate-700 dark:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors z-10"
+      >
+        <span className="material-symbols-outlined">arrow_back</span>
+      </button>
+
       {/* --- ХЭЛ СОЛИХ ХЭСЭГ --- */}
        <div className="absolute top-6 right-6 z-50" ref={langMenuRef}>
            <button 
@@ -321,27 +329,27 @@ const Login: React.FC = () => {
                       </button>
                   </div>
 
-                  {recoveryStep === 1 ? (
-                      <div className="space-y-4">
-                          <p className="text-sm text-slate-500 leading-relaxed">Enter your email address and we'll send you a recovery code to reset your password.</p>
-                          <input 
-                              type="email" 
-                              placeholder={t('email')}
-                              value={recoveryEmail}
-                              onChange={(e) => setRecoveryEmail(e.target.value)}
-                              className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border-none outline-none dark:text-white ring-2 ring-transparent focus:ring-primary transition-all"
-                          />
-                          <button 
-                              onClick={handleSendRecoveryCode}
-                              disabled={loading || !recoveryEmail}
-                              className="w-full bg-primary text-white font-bold py-4 rounded-2xl disabled:opacity-50 shadow-lg shadow-primary/20 transition-all"
-                          >
-                              {loading ? 'Sending...' : t('send_recovery_link')}
-                          </button>
-                      </div>
+                   {recoveryStep === 1 ? (
+                       <div className="space-y-4">
+                           <p className="text-sm text-slate-500 leading-relaxed">{t('recovery_instruction')}</p>
+                           <input 
+                               type="email" 
+                               placeholder={t('email')}
+                               value={recoveryEmail}
+                               onChange={(e) => setRecoveryEmail(e.target.value)}
+                               className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border-none outline-none dark:text-white ring-2 ring-transparent focus:ring-primary transition-all"
+                           />
+                           <button 
+                               onClick={handleSendRecoveryCode}
+                               disabled={loading || !recoveryEmail}
+                               className="w-full bg-primary text-white font-bold py-4 rounded-2xl disabled:opacity-50 shadow-lg shadow-primary/20 transition-all"
+                           >
+                               {loading ? t('sending') : t('send_recovery_link')}
+                           </button>
+                       </div>
                   ) : (
                       <div className="space-y-4">
-                          <p className="text-sm text-slate-500 leading-relaxed">Enter the 6-digit code sent to your email and your new strong password.</p>
+                          <p className="text-sm text-slate-500 leading-relaxed">{t('recovery_code_instruction')}</p>
                           <input 
                               type="text" 
                               placeholder={t('enter_recovery_code')}
@@ -361,7 +369,7 @@ const Login: React.FC = () => {
                               disabled={loading || !recoveryCode || !newPassword}
                               className="w-full bg-primary text-white font-bold py-4 rounded-2xl disabled:opacity-50 shadow-lg shadow-primary/20 transition-all"
                           >
-                              {loading ? 'Updating...' : t('update_password')}
+                              {loading ? t('updating') : t('update_password')}
                           </button>
                       </div>
                   )}
