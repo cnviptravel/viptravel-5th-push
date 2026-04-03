@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage, supportedLanguages, Language } from '../contexts/LanguageContext';
 import { useAppConfig } from '../contexts/AppConfigContext';
+import { LanguageTermsProvider } from '../contexts/LanguageTermsContext';
+import TermsOfServiceModal from '../components/TermsOfServiceModal';
 
 const Landing: React.FC = () => {
   const navigate = useNavigate();
@@ -10,6 +12,7 @@ const Landing: React.FC = () => {
   
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showAllServices, setShowAllServices] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
   const langMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -26,8 +29,8 @@ const Landing: React.FC = () => {
     navigate('/login');
   };
 
-  const handleOpenPrivacy = () => {
-    alert('Privacy policy will be shown here');
+  const handleOpenTerms = () => {
+    setShowTermsModal(true);
   };
 
   return (
@@ -226,7 +229,7 @@ const Landing: React.FC = () => {
             <span>© 2026 VIP Travel. {t('footer_copyright')}</span>
           </div>
           <button
-            onClick={handleOpenPrivacy}
+            onClick={handleOpenTerms}
             className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors"
           >
             {t('footer_terms')}
@@ -343,8 +346,23 @@ const Landing: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Terms of Service Modal */}
+      <TermsOfServiceModal
+        isOpen={showTermsModal}
+        onClose={() => setShowTermsModal(false)}
+      />
     </div>
   );
 };
 
-export default Landing;
+// Wrap the Landing component with LanguageTermsProvider
+const LandingWithTermsProvider: React.FC = () => {
+  return (
+    <LanguageTermsProvider>
+      <Landing />
+    </LanguageTermsProvider>
+  );
+};
+
+export default LandingWithTermsProvider;
