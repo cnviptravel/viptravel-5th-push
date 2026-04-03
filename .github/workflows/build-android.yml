@@ -13,6 +13,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ✅ 1. Эхлээд Java тохируулна
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # ✅ 2. Android SDK тохируулна (zipalign, build-tools г.м бүгд суугдана)
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ✅ 3. Node.js тохируулна
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -34,16 +46,6 @@ jobs:
         run: |
           npx cap add android || true
           npx cap sync android
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      # Энэ алхам Android-ын бүх багажуудыг (zipalign г.м) бэлдэж өгнө
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
