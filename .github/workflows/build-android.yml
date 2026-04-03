@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android Release
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           npm install @capacitor/core @capacitor/cli @capacitor/android
           npm install -g @capacitor/cli
 
-      - name: Init and add Android platform
+      - name: Sync Android platform
         run: |
           npx cap add android || true
           npx cap sync android
@@ -44,14 +44,20 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      - name: Build Debug APK
+      # Энэ хэсэгт Keystore-оор гарын үсэг зурж Release APK/AAB гаргана
+      - name: Build Release APK
         run: |
           cd android
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease
+        env:
+          MYAPP_RELEASE_STORE_FILE: ${{ secrets.RELEASE_STORE_FILE }}
+          MYAPP_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          MYAPP_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          MYAPP_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
-      - name: Upload APK
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: viptravel-debug.apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: viptravel-release.apk
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 7
