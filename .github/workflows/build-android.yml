@@ -49,7 +49,7 @@ jobs:
           cd android
           ./gradlew assembleRelease
 
-      # Энэ хэсэгт APK-д албан ёсоор гарын үсэг зурна
+      # APK-д албан ёсоор гарын үсэг зурах (Зассан хэсэг)
       - name: Sign Android Release
         uses: r0adkll/sign-android-release@v1
         id: sign_app
@@ -59,8 +59,9 @@ jobs:
           alias: ${{ secrets.RELEASE_KEY_ALIAS }}
           keyStorePassword: ${{ secrets.RELEASE_STORE_PASSWORD }}
           keyPassword: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          buildToolsVersion: "34.0.0"
 
-      # Гарын үсэг зурагдсан APK-г татаж авахаар байршуулна
+      # Гарын үсэг зурагдсан APK-г GitHub-аас татаж авахаар байршуулах
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
