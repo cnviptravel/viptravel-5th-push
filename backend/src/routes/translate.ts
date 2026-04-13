@@ -514,22 +514,37 @@ export async function handleTranslateText(request: Request, env: Env): Promise<R
             });
         }
 
+        console.log(`[TranslateText] Request: "${text.substring(0, 50)}..." from ${sourceLang} to ${targetLang}`);
+
         // 1. D1 кэш шалгах
         const hash = await makeHash(text, sourceLang, targetLang);
+        console.log(`[TranslateText] Hash: ${hash}`);
+        
         const cached = await env.DB.prepare(
-            `SELECT translated_text FROM translations WHERE text_hash=? AND source_lang=? AND target_lang=? LIMIT 1`
+            `SELECT translated_text, engine, usage_count FROM translations WHERE text_hash=? AND source_lang=? AND target_lang=? LIMIT 1`
         ).bind(hash, sourceLang, targetLang).first() as any;
 
         if (cached?.translated_text) {
-            console.log(`[Cache HIT] "${text.substring(0, 40)}"`);
+            console.log(`[Cache HIT] "${text.substring(0, 40)}..."`);
+            console.log(`[Cache HIT] Engine: ${cached.engine}, Usage count: ${cached.usage_count}`);
+            
             // usage_count нэмэгдүүлэх
             await env.DB.prepare(
                 `UPDATE translations SET usage_count = usage_count + 1 WHERE text_hash=? AND source_lang=? AND target_lang=?`
             ).bind(hash, sourceLang, targetLang).run();
-            return new Response(JSON.stringify({ translated: cached.translated_text, cached: true }), {
+            
+            console.log(`[Cache HIT] Updated usage_count`);
+            return new Response(JSON.stringify({ 
+                translated: cached.translated_text, 
+                cached: true,
+                engine: cached.engine,
+                usage_count: cached.usage_count + 1
+            }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
         }
+        
+        console.log(`[Cache MISS] "${text.substring(0, 40)}..."`);
 
         const srcName = LANG_NAMES[sourceLang] || sourceLang;
         const tgtName = LANG_NAMES[targetLang] || targetLang;
