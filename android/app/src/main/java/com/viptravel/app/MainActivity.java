@@ -31,17 +31,9 @@ public class MainActivity extends BridgeActivity {
             webView.setWebChromeClient(new WebChromeClient() {
                 @Override
                 public void onPermissionRequest(PermissionRequest request) {
-                    // Microphone болон camera зөвшөөрлийг өгөх
-                    String[] resources = request.getResources();
-                    for (String resource : resources) {
-                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource) ||
-                            PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource) ||
-                            PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID.equals(resource)) {
-                            request.grant(new String[]{resource});
-                            return;
-                        }
-                    }
-                    request.deny();
+                    // Хүссэн бүх resource-г нэгэн зэрэг grant хийх
+                    // тусд нь grant хийх нь зарим Android хувилбарт ажиллахгүй
+                    request.grant(request.getResources());
                 }
             });
         });

@@ -187,184 +187,100 @@ const Translator: React.FC = () => {
 
   const API_BASE = 'https://viptravel-backend.erdneebatulzii23.workers.dev';
 
-  // Android WebView-д зориулсан Web Speech API шалгах
-  const isAndroidWebView = () => {
-    return /Android/.test(navigator.userAgent) && /wv/.test(navigator.userAgent);
+  // Android шалгах (Capacitor буйлд апп + ердийн браузер хоёулаа)
+  const isAndroid = () => /Android/i.test(navigator.userAgent);
+
+  // Микрофон зөвшөөрөл авах — Android-д заавал дуудах ёстой
+  const requestMicPermission = (): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        // getUserMedia дэмжигдэхгүй бол шууд үргэлжлүүл (зарим iOS WebView)
+        resolve();
+        return;
+      }
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+          // Зөвшөөрөл авсан — stream-г тэр даруй зогсоох (зөвхөн permission-д хэрэгтэй)
+          stream.getTracks().forEach(track => track.stop());
+          resolve();
+        })
+        .catch(err => {
+          console.error('Microphone permission denied:', err);
+          reject(new Error('Микрофон зөвшөөрөл өгөөгүй байна: ' + err.message));
+        });
+    });
   };
 
-  // Утасны Web Speech API ашиглан текст авах (Android WebView-д зориулсан fallback)
+  // Speech Recognition эхлүүлэх — Android болон веб хоёуланд нэг замаар
   const startSpeechRecognition = (lang: string, isTop: boolean): Promise<string> => {
     console.log('startSpeechRecognition called with lang:', lang, 'isTop:', isTop);
-    return new Promise((resolve, reject) => {
-      // Android WebView-д зориулсан тусгай логик
-      if (isAndroidWebView()) {
-        console.log('Android WebView detected');
-        // Android WebView-д microphone зөвшөөрөл авах
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          console.error('Media devices not supported in WebView');
-          reject(new Error('Media devices not supported in WebView'));
+    return new Promise(async (resolve, reject) => {
+      // Android дээр байвал эхлээд getUserMedia-р зөвшөөрөл авна
+      if (isAndroid()) {
+        try {
+          console.log('Android detected — requesting mic permission first');
+          await requestMicPermission();
+          console.log('Mic permission granted');
+        } catch (err) {
+          reject(err);
           return;
         }
+      }
 
-        console.log('Requesting microphone permission...');
-        // Android-д зориулсан microphone зөвшөөрөл авах
-        navigator.mediaDevices.getUserMedia({ audio: true })
-          .then(stream => {
-            console.log('Microphone permission granted, stream obtained');
-            // Stream аваад дараа нь Web Speech API ашиглах
-            const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-            if (!SR) {
-              console.error('Speech recognition not supported');
-              stream.getTracks().forEach(track => track.stop());
-              reject(new Error('Speech recognition not supported'));
-              return;
-            }
-
-            console.log('Creating SpeechRecognition instance');
-            const r = new SR();
-            r.lang = langSpeechCode[lang] || lang;
-            r.interimResults = true;  // Завсрын үр дүнг авах
-            r.maxAlternatives = 1;
-            r.continuous = true;      // Үргэлжлүүлэн ярих
-            recognitionRef.current = r;
-
-            let finalTranscript = '';
-            let shouldResolve = false;
-            
-            r.onresult = (e: any) => {
-              console.log('Speech recognition result:', e.results);
-              let interimTranscript = '';
-              
-              for (let i = e.resultIndex; i < e.results.length; i++) {
-                const transcript = e.results[i][0].transcript;
-                
-                if (e.results[i].isFinal) {
-                  // Эцсийн үр дүн
-                  finalTranscript += transcript;
-                  console.log('Final transcript:', finalTranscript);
-                } else {
-                  // Завсрын үр дүн
-                  interimTranscript += transcript;
-                  console.log('Interim transcript:', interimTranscript);
-                  
-                  // Завсрын үр дүнг UI-д харуулах
-                  if (isTop) {
-                    setBotInterim(interimTranscript);
-                  } else {
-                    setTopInterim(interimTranscript);
-                  }
-                }
-              }
-              
-              // Эцсийн үр дүнг хадгалах, гэхдээ resolve хийхгүй
-              // Зөвхөн stopSpeechRecognition дуудагдахад л resolve хийх
-            };
-            
-            r.onerror = (e: any) => {
-              console.error('Speech recognition error:', e.error);
-              stream.getTracks().forEach(track => track.stop());
-              reject(new Error(e.error));
-            };
-            
-            r.onend = () => {
-              console.log('Speech recognition ended');
-              stream.getTracks().forEach(track => track.stop());
-              recognitionRef.current = null;
-              
-              // Завсрын үр дүнг цэвэрлэх
-              if (isTop) {
-                setBotInterim('');
-              } else {
-                setTopInterim('');
-              }
-              
-              // Хэрэв эцсийн үр дүн байвал resolve хийх
-              if (finalTranscript) {
-                resolve(finalTranscript);
-              }
-            };
-            
-            console.log('Starting speech recognition...');
-            r.start();
-          })
-          .catch(err => {
-            console.error('Microphone permission denied:', err);
-            reject(new Error('Microphone permission denied: ' + err.message));
-          });
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (!SR) {
+        console.error('SpeechRecognition not supported on this device/browser');
+        reject(new Error('not supported'));
         return;
       }
 
-      console.log('Regular web browser detected');
-      // Ердийн веб браузерын логик
-      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (!SR) { 
-        console.error('Speech recognition not supported');
-        reject(new Error('not supported')); 
-        return; 
-      }
-
-      console.log('Creating SpeechRecognition instance for web');
+      console.log('Creating SpeechRecognition instance');
       const r = new SR();
       r.lang = langSpeechCode[lang] || lang;
-      r.interimResults = true;   // Завсрын үр дүнг авах
+      r.interimResults = true;
       r.maxAlternatives = 1;
-      r.continuous = true;       // Үргэлжлүүлэн ярих
+      r.continuous = true;
       recognitionRef.current = r;
 
       let finalTranscript = '';
-      
+
       r.onresult = (e: any) => {
-        console.log('Speech recognition result (web):', e.results);
         let interimTranscript = '';
-        
         for (let i = e.resultIndex; i < e.results.length; i++) {
           const transcript = e.results[i][0].transcript;
-          
           if (e.results[i].isFinal) {
-            // Эцсийн үр дүн
             finalTranscript += transcript;
-            console.log('Final transcript (web):', finalTranscript);
+            console.log('Final transcript:', finalTranscript);
           } else {
-            // Завсрын үр дүн
             interimTranscript += transcript;
-            console.log('Interim transcript (web):', interimTranscript);
-            
-            // Завсрын үр дүнг UI-д харуулах
-            if (isTop) {
-              setBotInterim(interimTranscript);
-            } else {
-              setTopInterim(interimTranscript);
-            }
+            if (isTop) setBotInterim(interimTranscript);
+            else setTopInterim(interimTranscript);
           }
         }
-        
-        // Эцсийн үр дүнг хадгалах, гэхдээ resolve хийхгүй
-        // Зөвхөн stopSpeechRecognition дуудагдахад л resolve хийх
       };
-      
+
       r.onerror = (e: any) => {
-        console.error('Speech recognition error (web):', e.error);
+        console.error('Speech recognition error:', e.error);
+        recognitionRef.current = null;
+        if (isTop) setBotInterim('');
+        else setTopInterim('');
         reject(new Error(e.error));
       };
-      
-      r.onend = () => { 
-        console.log('Speech recognition ended (web)');
+
+      r.onend = () => {
+        console.log('Speech recognition ended');
         recognitionRef.current = null;
-        
-        // Завсрын үр дүнг цэвэрлэх
-        if (isTop) {
-          setBotInterim('');
-        } else {
-          setTopInterim('');
-        }
-        
-        // Хэрэв эцсийн үр дүн байвал resolve хийх
+        if (isTop) setBotInterim('');
+        else setTopInterim('');
         if (finalTranscript) {
           resolve(finalTranscript);
+        } else {
+          // Хоосон transcript — resolve-г хоосон текстээр дуусга
+          resolve('');
         }
       };
-      
-      console.log('Starting speech recognition (web)...');
+
+      console.log('Starting speech recognition...');
       r.start();
     });
   };
