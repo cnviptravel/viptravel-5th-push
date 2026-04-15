@@ -7,6 +7,8 @@ import { AuthContext } from '../App';
 import { apiUpdateProfile } from '../services/api';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useSnackbar } from '../contexts/SnackbarContext';
+import { Geolocation } from '@capacitor/geolocation';
+import { Capacitor } from '@capacitor/core';
 
 const API_URL = "https://api.cnviptravel.com";
 
@@ -38,6 +40,60 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
   const mapRef = useRef<any>(null);
   const geolocateRef = useRef<any>(null);
 
+  // --- ЗАСВАР: GPS АЛДААГ ШАЛГАДАГ БОЛСОН ---
+  const handleManualGeolocate = async () => {
+    try {
+      let lat, lng;
+
+      if (Capacitor.isNativePlatform()) {
+        const permissions = await Geolocation.checkPermissions();
+        
+        // Байршил тогтоох эрхийг шалгах
+        if (permissions.location !== 'granted') {
+          const request = await Geolocation.requestPermissions();
+          if (request.location !== 'granted') {
+            showSnackbar('Апп-д байршил ашиглах зөвшөөрөл өгнө үү.', 'warning');
+            return;
+          }
+        }
+        
+        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+      } else {
+        if (geolocateRef.current) {
+          geolocateRef.current.trigger();
+          return;
+        }
+      }
+
+      if (lat && lng) {
+        processNewLocation(lat, lng);
+      }
+    } catch (error: any) {
+      console.error("GPS Error:", error);
+      
+      // GPS унтраастай үед эсвэл бусад алдаа гарвал snackbar-аар мэдээлнэ
+      if (error.message && (error.message.includes("location disabled") || error.code === "2")) {
+        showSnackbar('Та утасныхаа GPS-ийг асаана уу.', 'warning');
+      } else if (error.message && error.message.includes("timeout")) {
+        showSnackbar('Байршил тогтоох хугацаа дууслаа. Та задгай талбайд дахин оролдоно уу.', 'warning');
+      } else {
+        showSnackbar('Байршил тогтооход алдаа гарлаа. GPS-ээ шалгана уу.', 'error');
+      }
+    }
+  };
+
+  const processNewLocation = (lat: number, lng: number) => {
+    setViewport(prev => ({ ...prev, latitude: lat, longitude: lng, zoom: 14 }));
+    
+    if (showLocationSaveButton) {
+      setUserLocation({ lat, lng });
+      setShowLocationFound(true);
+      setTimeout(() => setShowLocationFound(false), 3000);
+    }
+  };
+
   const handleUpdateLocation = async () => {
     if (!auth.user || !userLocation) return;
     
@@ -63,7 +119,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
     }
   };
 
-  // Fetch Mapbox token from backend
   useEffect(() => {
     const fetchToken = async () => {
       try {
@@ -82,7 +137,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
     fetchToken();
   }, []);
 
-  // Filter users with valid location data and approved status
   const validUsers = useMemo(() => {
     return users.filter(u => 
       u.status === 'approved' && 
@@ -94,7 +148,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
     );
   }, [users]);
 
-  // Prepare points for clustering
   const points = useMemo(() => {
     return validUsers.map(user => ({
       type: 'Feature' as const,
@@ -110,7 +163,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
     }));
   }, [validUsers]);
 
-  // Initialize Supercluster
   const supercluster = useMemo(() => {
     const cluster = new Supercluster({
       radius: 75,
@@ -120,7 +172,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
     return cluster;
   }, [points]);
 
-  // Get clusters for current viewport
   const clusters = useMemo(() => {
     if (!mapRef.current || !mapLoaded) return [];
     const map = mapRef.current.getMap();
@@ -133,7 +184,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
     );
   }, [supercluster, viewport, mapLoaded]);
 
-  // Show loading state while fetching token
   if (!mapboxToken) {
     return (
       <div className="w-full h-full rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
@@ -165,36 +215,37 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
         mapboxAccessToken={mapboxToken}
         style={{ width: '100%', height: '100%' }}
         attributionControl={false}
+        reuseMaps
       >
         <NavigationControl position="top-right" />
+        
         <GeolocateControl 
           ref={geolocateRef}
           position="top-right" 
           positionOptions={{ enableHighAccuracy: true }} 
-          trackUserLocation={false} // Байнга байрлал тодорхойлохгүй
+          trackUserLocation={false} 
           showUserHeading={true}
           onGeolocate={(e: any) => {
-            if (showLocationSaveButton && e.coords) {
-              setUserLocation({
-                lat: e.coords.latitude,
-                lng: e.coords.longitude
-              });
-              // GPS байршил олдсон бүрт жижиг мэдэгдэл харуулах
-              setShowLocationFound(true);
-              // 3 секундын дараа автоматаар хаах
-              setTimeout(() => {
-                setShowLocationFound(false);
-              }, 3000);
+            if (e.coords) {
+              processNewLocation(e.coords.latitude, e.coords.longitude);
             }
           }}
         />
+
+        <div className="absolute top-[110px] right-[10px] z-10">
+            <button 
+                onClick={handleManualGeolocate}
+                className="bg-white dark:bg-slate-900 p-2 rounded shadow-md border border-slate-200 dark:border-slate-700 active:scale-90 transition-transform flex items-center justify-center"
+            >
+                <span className="material-symbols-outlined text-primary text-[20px]">my_location</span>
+            </button>
+        </div>
 
         {clusters.map((cluster: any) => {
           const [lng, lat] = cluster.geometry.coordinates;
           const { cluster: isCluster, point_count: pointCount } = cluster.properties;
 
           if (isCluster) {
-            // Render cluster
             return (
               <Marker
                 key={`cluster-${cluster.id}`}
@@ -229,7 +280,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
             );
           }
 
-          // Render individual user marker
           const user = cluster.properties.user;
           return (
             <Marker
@@ -241,9 +291,7 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
                 setSelectedUser(user);
               }}
             >
-              <div 
-                className="cursor-pointer hover:scale-110 transition-transform group relative"
-              >
+              <div className="cursor-pointer hover:scale-110 transition-transform group relative">
                 <div 
                   className="bg-white p-1 rounded-full shadow-lg border-2"
                   style={{ borderColor: markerColor }}
@@ -413,7 +461,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
         </div>
       )}
 
-      {/* Login Prompt for non-logged in users */}
       {showLocationSaveButton && showLoginPrompt && !auth.user && (
         <div className="absolute bottom-4 left-4 right-4 bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-xl border border-slate-200 dark:border-slate-800 animate-slide-up">
           <div className="flex items-center justify-between mb-3">
@@ -469,7 +516,6 @@ const MapView: React.FC<MapViewProps> = ({ users, markerColor = '#f97316', showL
   );
 };
 
-// Lazy-loaded wrapper component
 const LazyMapView: React.FC<MapViewProps> = (props) => {
   return (
     <Suspense fallback={
