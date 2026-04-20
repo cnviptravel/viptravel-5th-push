@@ -3,6 +3,7 @@
 import { Env } from '../types/env';
 import { corsHeaders } from '../config/cors';
 import { sendEmail, getVerificationEmailHtml } from '../services/email';
+import Pusher from 'pusher';
 
 /**
  * Handle login request
@@ -454,5 +455,51 @@ export async function handleTelegramWebhook(request: Request, env: Env): Promise
     } catch (error) {
         console.error('Telegram webhook error:', error);
         return new Response('OK'); // Always return OK to Telegram
+    }
+}
+
+/**
+ * Handle Pusher Private Channel Authentication
+ */
+export async function handlePusherAuth(request: Request, env: Env): Promise<Response> {
+    try {
+        const pusher = new Pusher({
+            appId: env.PUSHER_APP_ID,
+            key: env.PUSHER_KEY,
+            secret: env.PUSHER_SECRET,
+            cluster: env.PUSHER_CLUSTER,
+            useTLS: true
+        });
+
+        // Pusher client sends data as application/x-www-form-urlencoded by default
+        let socket_id = '';
+        let channel_name = '';
+
+        const contentType = request.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            const body = await request.json() as any;
+            socket_id = body.socket_id;
+            channel_name = body.channel_name;
+        } else {
+            const formData = await request.formData();
+            socket_id = formData.get('socket_id') as string;
+            channel_name = formData.get('channel_name') as string;
+        }
+
+        if (!socket_id || !channel_name) {
+            return new Response('Forbidden', { status: 403, headers: corsHeaders });
+        }
+
+        const authResponse = pusher.authorizeChannel(socket_id, channel_name);
+
+        return new Response(JSON.stringify(authResponse), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+    } catch (e: any) {
+        console.error("Pusher auth error:", e);
+        return new Response(JSON.stringify({ error: "Internal server error" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
     }
 }

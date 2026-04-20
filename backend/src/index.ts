@@ -10,7 +10,8 @@ import {
     handleRegister,
     handleOtpSend,
     handleOtpVerify,
-    handleTelegramWebhook
+    handleTelegramWebhook,
+    handlePusherAuth
 } from './routes/auth';
 
 import {
@@ -36,7 +37,9 @@ import {
     handleGetConversations,
     handleMessageReaction,
     handleMarkMessageRead,
-    handleForwardMessage
+    handleForwardMessage,
+    handleMarkMessageDelivered,
+    handleMarkMessageSeen
 } from './routes/messages';
 
 import {
@@ -132,6 +135,10 @@ export default {
 
             if (method === "POST" && path === "/telegram/webhook") {
                 return handleTelegramWebhook(request, env);
+            }
+
+            if (method === "POST" && path === "/pusher/auth") {
+                return handlePusherAuth(request, env);
             }
 
             // 2. USER MANAGEMENT ROUTES
@@ -232,6 +239,9 @@ export default {
             if (method === "POST" && path === "/messages/forward") {
                 return handleForwardMessage(request, env, ctx);
             }
+
+            if (path === '/api/messages/delivered' && method === 'PUT') return handleMarkMessageDelivered(request, env);
+            if (path === '/api/messages/seen' && method === 'PUT') return handleMarkMessageSeen(request, env, ctx);
 
             // 4. CALLS & WEBRTC ROUTES
             if (method === "GET" && path === "/calls/turn-credentials") {

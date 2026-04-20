@@ -12,6 +12,7 @@ import CallModal from '../components/CallModal';
 import { CloudflareCalls } from '../services/cloudflareCalls'; 
 import Pusher from 'pusher-js';
 import { useSnackbar } from '../contexts/SnackbarContext';
+import EmojiPicker from 'emoji-picker-react';
 
 const API_URL = "https://viptravel-backend.erdneebatulzii23.workers.dev";
 
@@ -106,11 +107,21 @@ const ChatDetail: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
   
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [partner, setPartner] = useState<User | null>(null);
   const [inputText, setInputText] = useState('');
   const [callType, setCallType] = useState<'voice' | 'video' | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  
+  const [replyTo, setReplyTo] = useState<any>(null);
+  const [isTyping, setIsTyping] = useState(false);
+  const [typingName, setTypingName] = useState('');
+  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
+  
+  const touchStartX = useRef<number>(0);
+  const channelRef = useRef<any>(null);
+  const typingTimeoutRef = useRef<any>(null);
+  const stopTypingTimeoutRef = useRef<any>(null);
   const [callActive, setCallActive] = useState(false);
   const [localStreamState, setLocalStreamState] = useState<MediaStream | null>(null);
   const [remoteStreamState, setRemoteStreamState] = useState<MediaStream | null>(null);
@@ -165,8 +176,12 @@ const ChatDetail: React.FC = () => {
       await fetch(`${API_URL}/conversations/${auth.user._id}/${userId}`, { method: 'DELETE' });
       // ChatList-д refresh хийхэд туслах event trigger хийх
       window.dispatchEvent(new CustomEvent('chat-deleted'));
-      navigate('/chats');
-    } catch (e) { console.error(e); }
+      showSnackbar(t('chat_deleted'), 'success');
+      setTimeout(() => { navigate('/chats'); }, 300);
+    } catch (e) {
+      console.error(e);
+      showSnackbar(t('delete_failed'), 'error');
+    }
     setShowChatMenu(false);
   };
 
@@ -180,7 +195,7 @@ const ChatDetail: React.FC = () => {
   };
 
   const handleReplyMessage = (msg: Message) => {
-    setInputText(`Replying to: ${msg.text?.substring(0, 50)}${msg.text && msg.text.length > 50 ? '...' : ''}\n`);
+    setReplyTo(msg);
     setSelectedMsgId(null);
   };
 
@@ -251,7 +266,7 @@ const ChatDetail: React.FC = () => {
 
   const handleMsgLongPress = (msgId: string) => {
     longPressTimerRef.current = setTimeout(() => {
-      setSelectedMsgId(msgId);
+      setShowReactionPicker(msgId);
     }, 500);
   };
 
@@ -267,7 +282,30 @@ const ChatDetail: React.FC = () => {
       try {
         const data = await apiGetMessages(auth.user._id, userId);
         if (Array.isArray(data)) {
-          setMessages(data);
+          const parsedData = data.map((msg: any) => ({
+           ...msg,
+            reactions: typeof msg.reactions === 'string'
+             ? JSON.parse(msg.reactions || '[]')
+              : msg.reactions || []
+          }));
+          const messagesWithReply = parsedData.map((msg: any) => {
+            if (msg.replyTo && typeof msg.replyTo === 'string') {
+              const originalMsg = parsedData.find((m: any) => m.id === msg.replyTo);
+              return {
+               ...msg,
+                replyTo: originalMsg ? {
+                  id: originalMsg.id,
+                  text: originalMsg.text,
+                  senderId: originalMsg.senderId,
+                  senderName: originalMsg.senderId === auth.user?._id ? 'yourself' : partner?.name || 'User',
+                  media: originalMsg.media,
+                  mediaType: originalMsg.mediaType
+                } : null
+              };
+            }
+            return msg;
+          });
+          setMessages(messagesWithReply);
         }
       } catch (e) {
         console.error("Messages load error", e);
@@ -302,18 +340,113 @@ const ChatDetail: React.FC = () => {
   }, [userId, auth.user?._id]);
 
   const authUserId = auth.user?._id;
+  
+  // Custom Pusher Events for Features
+  useEffect(() => {
+    if (!authUserId || !userId) return;
+
+    const pusher = new Pusher(import.meta.env.VITE_PUSHER_KEY || '37cb2c72dc3de4f325bb', {
+        cluster: import.meta.env.VITE_PUSHER_CLUSTER || 'ap1',
+        authEndpoint: `${API_URL}/pusher/auth`
+    });
+
+    const hisChan = pusher.subscribe(`private-user-${userId}`);
+    const myChan = pusher.subscribe(`private-user-${authUserId}`);
+    channelRef.current = hisChan;
+
+    myChan.bind('client-seen', (data: any) => {
+        setMessages(prev => prev.map(m => m.id === data.messageId ? { ...m, seen: true, delivered: true } : m));
+        
+        fetch(`${API_URL}/api/messages/seen`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messageId: data.messageId, userId: authUserId })
+        }).catch(e => console.error('seen API error:', e));
+    });
+
+    myChan.bind('client-delivered', () => {
+        setMessages(prev => prev.map(m => m.senderId === authUserId && !m.seen ? { ...m, delivered: true } : m));
+    });
+
+    myChan.bind('client-typing', (data: any) => {
+        setIsTyping(true);
+        setTypingName(data.name);
+    });
+
+    myChan.bind('client-stop-typing', () => {
+        setIsTyping(false);
+    });
+
+    return () => {
+        pusher.unsubscribe(`private-user-${userId}`);
+        pusher.unsubscribe(`private-user-${authUserId}`);
+        pusher.disconnect();
+    };
+  }, [authUserId, userId]);
+
+  // Intersection Observer for 'client-seen'
+  useEffect(() => {
+    if (!authUserId || !userId) return;
+    const timers = new Map();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const msgId = entry.target.getAttribute('data-id');
+          const msgSender = entry.target.getAttribute('data-sender');
+          const isSeen = entry.target.getAttribute('data-seen') === 'true';
+
+          if (!msgId || msgSender === authUserId || isSeen) return;
+
+          if (entry.isIntersecting) {
+            timers.set(msgId, setTimeout(() => {
+                if (channelRef.current) {
+                    channelRef.current.trigger('client-seen', { messageId: msgId, userId: authUserId });
+                }
+            }, 1000));
+          } else {
+            if (timers.has(msgId)) {
+                clearTimeout(timers.get(msgId));
+                timers.delete(msgId);
+            }
+          }
+        });
+      },
+      { threshold: 0.5 }
+    );
+
+    const elements = document.querySelectorAll('.message-item');
+    elements.forEach(el => observer.observe(el));
+
+    return () => {
+        observer.disconnect();
+        timers.forEach(t => clearTimeout(t));
+    };
+  }, [messages, authUserId, userId]);
+
   useEffect(() => {
     if (userId && authUserId) {
-        const unsubscribe = apiSubscribeToMessages(() => {
+        // @ts-ignore
+        const unsubscribe = apiSubscribeToMessages((newMsg: Message) => {
           loadMessages();
           apiMarkMessagesRead(authUserId, userId);
-        });
 
-        const interval = setInterval(loadMessages, 5000);
+          if (newMsg && newMsg.id && newMsg.senderId !== authUserId) {
+            fetch(`${API_URL}/api/messages/delivered`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ messageId: newMsg.id })
+            }).catch(e => console.error('delivered API error:', e));
+          }
+
+          if (channelRef.current) {
+              channelRef.current.trigger('client-delivered', { userId: authUserId });
+          }
+          setIsTyping(false);
+        });
 
         return () => {
             unsubscribe();
-            clearInterval(interval);
             if (callsRef.current) {
                 callsRef.current.close();
                 callsRef.current = null;
@@ -342,14 +475,35 @@ const ChatDetail: React.FC = () => {
     }
   }, [remoteStreamState, callActive]);
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputText(e.target.value);
+    
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+        channelRef.current?.trigger('client-typing', { userId: auth.user?._id, name: auth.user?.name || 'User' });
+    }, 500);
+
+    if (stopTypingTimeoutRef.current) clearTimeout(stopTypingTimeoutRef.current);
+    stopTypingTimeoutRef.current = setTimeout(() => {
+        channelRef.current?.trigger('client-stop-typing', { userId: auth.user?._id });
+    }, 2000);
+  };
+
   const handleSend = async () => {
     if (!inputText.trim() || !auth.user || !userId) return;
     const text = inputText;
     setInputText('');
     setShowEmojiPicker(false);
+    
+    if (channelRef.current) {
+        channelRef.current.trigger('client-stop-typing', { userId: auth.user._id });
+    }
+
     try {
-        const newMessage = await apiSendMessage(auth.user._id, userId, text);
-        setMessages(prev => [...prev, newMessage]); 
+        // @ts-ignore
+        const newMessage = await apiSendMessage(auth.user._id, userId, text, undefined, undefined, undefined, replyTo?.id || replyTo?._id);
+        setMessages(prev => [...prev, { ...newMessage, delivered: false, seen: false }]); 
+        setReplyTo(null);
     } catch (e) {
         showSnackbar(t('send_failed'), 'error');
     }
@@ -694,16 +848,49 @@ const ChatDetail: React.FC = () => {
               }
               const isMe = msg.senderId === auth.user?._id;
               return (
-                  <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative group`}
-                       onTouchStart={() => handleMsgLongPress(msg.id)}
+                  <div key={msg.id} 
+                       className={`message-item flex ${isMe ? 'justify-end' : 'justify-start'} relative group`}
+                       data-id={msg.id}
+                       data-sender={msg.senderId}
+                       data-seen={msg.seen ? 'true' : 'false'}
+                       onTouchStart={(e) => {
+                           handleMsgLongPress(msg.id);
+                           touchStartX.current = e.touches[0].clientX;
+                       }}
+                       onTouchMove={(e) => {
+                           const touchX = e.touches[0].clientX;
+                           if (touchX - touchStartX.current > 50) {
+                               setReplyTo(msg);
+                           }
+                       }}
                        onTouchEnd={handleMsgTouchEnd}
                        onContextMenu={(e) => { e.preventDefault(); setSelectedMsgId(msg.id); }}
                   >
+                      {/* Reaction Trigger & Picker */}
+                      <div className={`absolute ${isMe ? 'right-full mr-2' : 'left-full ml-2'} top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center`}>
+                          <button onClick={() => setShowReactionPicker(msg.id)} className="text-slate-400 hover:text-yellow-500 bg-white dark:bg-slate-800 rounded-full w-6 h-6 flex items-center justify-center shadow">
+                              <span className="material-symbols-outlined text-[16px]">add_reaction</span>
+                          </button>
+                      </div>
+                      {showReactionPicker === msg.id && (
+                          <div className={`absolute ${isMe ? 'right-0' : 'left-0'} -top-12 bg-white dark:bg-slate-800 shadow-xl rounded-2xl px-3 py-2 flex gap-2 z-20 border border-slate-200 dark:border-slate-700`}>
+                              {['👍','❤️','😂','😮','😢','🙏','🖕'].map(r => (
+                                  <button key={r} onClick={() => { handleAddReaction(msg.id, r); setShowReactionPicker(null); }} className="text-2xl hover:scale-125 active:scale-90 transition-transform">{r}</button>
+                              ))}
+                          </div>
+                      )}
+
                       <div className={`max-w-[75%] rounded-2xl p-3 shadow-sm ${
                           isMe 
                           ? 'bg-primary text-white rounded-br-none' 
                           : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-bl-none border border-slate-100 dark:border-slate-700'
                       }`}>
+                          {msg.replyTo && (
+                              <div className="bg-black/10 dark:bg-white/10 rounded-lg p-2 mb-2 text-xs opacity-80 border-l-2 border-blue-500">
+                                  <span className="font-semibold block">{msg.replyTo.senderName || 'Replied Message'}</span>
+                                  <span className="truncate block">{msg.replyTo.text || 'Media'}</span>
+                              </div>
+                          )}
                           {msg.media ? (
                               msg.mediaType === 'image' ? <img src={msg.media} className="rounded-lg max-w-full" alt="sent content" /> : 
                               msg.mediaType === 'video' ? <video src={msg.media} controls className="rounded-lg max-w-full" /> :
@@ -711,10 +898,30 @@ const ChatDetail: React.FC = () => {
                                 <VoiceMessage src={msg.media!} isMe={isMe} />
                               ) :
                               <a href={msg.media} download={msg.fileName} className="underline text-xs">{msg.fileName || 'File'}</a>
-                          ) : <p className="text-sm">{msg.text}</p>}
-                          <div className={`text-[9px] mt-1 flex justify-end opacity-70`}>
-                              {new Date(msg.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          ) : <p className="text-sm break-words">{msg.text}</p>}
+                          <div className={`text-[9px] mt-1 flex justify-end items-center gap-1 opacity-80`}>
+                              <span>{new Date(msg.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                              {isMe && (
+                                  msg.seen ? (
+                                      <span className="material-symbols-outlined text-[14px] text-blue-400">done_all</span>
+                                  ) : msg.delivered ? (
+                                      <span className="material-symbols-outlined text-[14px] text-slate-300">done_all</span>
+                                  ) : (
+                                      <span className="material-symbols-outlined text-[14px] text-slate-300">done</span>
+                                  )
+                              )}
                           </div>
+                          
+                          {/* Render Reactions if any */}
+                          {msg.reactions && Array.isArray(msg.reactions) && msg.reactions.length > 0 && (
+                             <div className={`absolute -bottom-2 ${isMe ? 'right-2' : 'left-2'} flex gap-0.5 z-10`}>
+                                 {msg.reactions && Array.isArray(msg.reactions) && msg.reactions.length > 0 && msg.reactions.map((r: any, i: number) => (
+                                     <span key={i} className="bg-white dark:bg-slate-700 rounded-full text-[10px] px-1 shadow border border-slate-100 dark:border-slate-600">
+                                         {r.reaction}
+                                     </span>
+                                 ))}
+                             </div>
+                          )}
                       </div>
                       {/* Message action popup */}
                       {selectedMsgId === msg.id && (
@@ -739,6 +946,16 @@ const ChatDetail: React.FC = () => {
                   </div>
               );
           })}
+          {isTyping && (
+              <div className="flex items-center gap-2 p-2 w-max bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-bl-none shadow-sm">
+                 <span className="text-xs text-slate-500">{typingName} бичиж байна</span>
+                 <div className="flex gap-1">
+                    <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                 </div>
+              </div>
+          )}
           <div ref={messagesEndRef} />
       </div>
 
@@ -770,32 +987,45 @@ const ChatDetail: React.FC = () => {
               </div>
             ) : (
               /* Normal Input UI */
-              <div className="flex items-center gap-1.5">
-                <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="text-slate-400 hover:text-primary p-1.5 transition-colors flex-shrink-0">
-                    <span className="material-symbols-outlined text-xl">sentiment_satisfied</span>
-                </button>
-                <label className="text-slate-400 hover:text-primary p-1.5 cursor-pointer transition-colors flex-shrink-0">
-                    <span className="material-symbols-outlined text-xl">attach_file</span>
-                    <input type="file" className="hidden" onChange={handleMediaUpload} />
-                </label>
-                <div className="flex-1 relative">
-                  <input 
-                      value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                      placeholder="Message..."
-                      className="w-full bg-slate-100 dark:bg-slate-800 rounded-2xl px-4 py-2.5 text-sm outline-none dark:text-white border-none focus:ring-2 focus:ring-blue-500/20 transition-shadow"
-                  />
-                </div>
-                {inputText.trim() ? (
-                  <button onClick={handleSend} className="bg-blue-500 hover:bg-blue-600 text-white p-2.5 rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-all flex-shrink-0">
-                      <span className="material-symbols-outlined text-lg">send</span>
-                  </button>
-                ) : (
-                  <button onClick={startRecording} className="bg-blue-50 dark:bg-blue-500/10 text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-500/20 w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition-all flex-shrink-0">
-                      <span className="material-symbols-outlined text-[22px]">mic</span>
-                  </button>
+              <div className="flex flex-col relative">
+                {replyTo && (
+                    <div className="flex items-center justify-between bg-slate-100 dark:bg-slate-800 rounded-t-2xl px-4 py-2 mx-12 -mb-2 pb-4 border border-slate-200 dark:border-slate-700">
+                        <div className="flex flex-col min-w-0">
+                            <span className="text-xs font-semibold text-blue-500">Replying to {replyTo.senderId === auth.user?._id ? 'yourself' : partner?.name}</span>
+                            <span className="text-xs text-slate-500 truncate">{replyTo.text || 'Media'}</span>
+                        </div>
+                        <button onClick={() => setReplyTo(null)} className="text-slate-400 hover:text-slate-600">
+                            <span className="material-symbols-outlined text-sm">close</span>
+                        </button>
+                    </div>
                 )}
+                <div className="flex items-center gap-1.5 relative z-10">
+                  <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="text-slate-400 hover:text-primary p-1.5 transition-colors flex-shrink-0">
+                      <span className="material-symbols-outlined text-xl">sentiment_satisfied</span>
+                  </button>
+                  <label className="text-slate-400 hover:text-primary p-1.5 cursor-pointer transition-colors flex-shrink-0">
+                      <span className="material-symbols-outlined text-xl">attach_file</span>
+                      <input type="file" className="hidden" onChange={handleMediaUpload} />
+                  </label>
+                  <div className="flex-1 relative">
+                    <input 
+                        value={inputText}
+                        onChange={handleInputChange}
+                        onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                        placeholder="Message..."
+                        className="w-full bg-slate-100 dark:bg-slate-800 rounded-2xl px-4 py-2.5 text-sm outline-none dark:text-white border-none focus:ring-2 focus:ring-blue-500/20 transition-shadow"
+                    />
+                  </div>
+                  {inputText.trim() ? (
+                    <button onClick={handleSend} className="bg-blue-500 hover:bg-blue-600 text-white p-2.5 rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-all flex-shrink-0">
+                        <span className="material-symbols-outlined text-lg">send</span>
+                    </button>
+                  ) : (
+                    <button onClick={startRecording} className="bg-blue-50 dark:bg-blue-500/10 text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-500/20 w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition-all flex-shrink-0">
+                        <span className="material-symbols-outlined text-[22px]">mic</span>
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -806,8 +1036,8 @@ const ChatDetail: React.FC = () => {
       )}
 
       {showEmojiPicker && (
-          <div className="absolute bottom-20 left-4 bg-white dark:bg-slate-800 shadow-2xl rounded-2xl p-3 grid grid-cols-6 gap-1 z-20 border border-slate-100 dark:border-slate-700 animate-slide-up">
-              {emojis.map(e => <button key={e} onClick={() => { setInputText(p => p + e); setShowEmojiPicker(false); }} className="text-xl p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors">{e}</button>)}
+          <div className="absolute bottom-20 left-4 z-20 animate-slide-up">
+              <EmojiPicker onEmojiClick={(e: any) => { setInputText(p => p + e.emoji); }} />
           </div>
       )}
 

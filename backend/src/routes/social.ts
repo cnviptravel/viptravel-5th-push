@@ -2,6 +2,7 @@
 
 import { Env } from '../types/env';
 import { corsHeaders } from '../config/cors';
+import { triggerPusher } from '../services/pusher';
 
 /**
  * Follow a user
@@ -29,10 +30,17 @@ export async function handleFollow(request: Request, env: Env): Promise<Response
         ).bind(String(followerId)).first();
         
         const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        const notifTime = Date.now();
         await env.DB.prepare(`
             INSERT INTO notifications (id, recipientId, senderId, senderName, type, read, createdAt) 
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(notifId, String(followingId), String(followerId), follower?.full_name || 'User', 'follow', 0, Date.now()).run();
+        `).bind(notifId, String(followingId), String(followerId), follower?.full_name || 'User', 'follow', 0, notifTime).run();
+        
+        try {
+            await triggerPusher(env, `private-user-${followingId}`, "notification", {
+                id: notifId, recipientId: String(followingId), senderId: String(followerId), senderName: follower?.full_name || 'User', type: 'follow', read: false, createdAt: notifTime
+            });
+        } catch (_) {}
     }
     
     return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });

@@ -81,6 +81,7 @@ const CallModal: React.FC<CallModalProps> = ({
   const { t } = useLanguage();
   const [status, setStatus] = useState<'calling' | 'connecting' | 'connected'>(isReceiver ? 'connecting' : 'calling');
   const [duration, setDuration] = useState(0);
+  const [currentType, setCurrentType] = useState(type);
   const [isMuted, setIsMuted] = useState(false);
   const [isCamOff, setIsCamOff] = useState(type !== 'video');
   const [isSpeaker, setIsSpeaker] = useState(true);
@@ -222,8 +223,18 @@ const CallModal: React.FC<CallModalProps> = ({
     setIsMuted(!isMuted);
   };
 
-  const toggleCamera = () => {
-    localStream?.getVideoTracks().forEach(t => { t.enabled = isCamOff; });
+  const toggleCamera = async () => {
+    if (currentType === 'voice' && isCamOff && (window as any).__callerCallsRef) {
+      // Upgrade from voice to video
+      await (window as any).__callerCallsRef.upgradeToVideo();
+      const newStream = (window as any).__callerCallsRef.localStream;
+      if (newStream && localVideoRef.current) {
+        localVideoRef.current.srcObject = newStream;
+      }
+      setCurrentType('video'); // Make UI switch to video mode
+    } else {
+      localStream?.getVideoTracks().forEach(t => { t.enabled = isCamOff; });
+    }
     setIsCamOff(!isCamOff);
   };
 
@@ -244,13 +255,13 @@ const CallModal: React.FC<CallModalProps> = ({
           autoPlay
           playsInline
           className={`w-full h-full object-cover transition-opacity duration-500 ${
-            type === 'video' && status === 'connected' && remoteStream ? 'opacity-100' : 'opacity-0'
+            currentType === 'video' && status === 'connected' && remoteStream ? 'opacity-100' : 'opacity-0'
           }`}
         />
       </div>
       
       {/* Background overlay when no remote video */}
-      {!(type === 'video' && status === 'connected' && remoteStream) && (
+      {!(currentType === 'video' && status === 'connected' && remoteStream) && (
         <div className="absolute inset-0 z-20">
           <img src={partnerPic} className="w-full h-full object-cover scale-110" alt="" />
           <div className="absolute inset-0 backdrop-blur-3xl bg-black/70" />
@@ -303,7 +314,7 @@ const CallModal: React.FC<CallModalProps> = ({
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
                 <span className="text-white/70 text-sm tracking-widest uppercase animate-pulse">
-                  {type === 'video' ? 'Video Calling...' : 'Voice Calling...'}
+                  {currentType === 'video' ? 'Video Calling...' : 'Voice Calling...'}
                 </span>
               </div>
             )}
@@ -312,7 +323,7 @@ const CallModal: React.FC<CallModalProps> = ({
       </div>
 
       {/* ── CENTER AVATAR (when no video or connecting) ── */}
-      {!(type === 'video' && status === 'connected') && (
+      {!(currentType === 'video' && status === 'connected') && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6">
           {/* Avatar with rings */}
           <div className="relative flex items-center justify-center">
@@ -332,7 +343,7 @@ const CallModal: React.FC<CallModalProps> = ({
           </div>
 
           {/* Sound wave for voice calls */}
-          {type === 'voice' && status === 'connected' && (
+          {currentType === 'voice' && status === 'connected' && (
             <div className="flex items-center gap-1.5 h-10">
               {[0.3, 0.6, 1, 0.7, 0.4, 0.8, 0.5, 0.9, 0.6, 0.7, 0.5, 0.8].map((h, i) => (
                 <div

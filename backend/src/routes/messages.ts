@@ -33,8 +33,8 @@ export async function handleSendMessage(request: Request, env: Env, ctx: Executi
     const msgId = `msg_${Date.now()}`;
     
     await env.DB.prepare(`
-        INSERT INTO messages (id, senderId, receiverId, text, media, mediaType, fileName, createdAt, read, readAt, reactions, replyTo, forwardedFrom) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, '[]', ?, ?)
+        INSERT INTO messages (id, senderId, receiverId, text, media, mediaType, fileName, createdAt, read, readAt, reactions, replyTo, forwardedFrom, delivered, seen, seenBy) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, '[]', ?, ?, 0, 0, '[]')
     `).bind(
         msgId, 
         String(m.senderId), 
@@ -49,7 +49,7 @@ export async function handleSendMessage(request: Request, env: Env, ctx: Executi
     ).run();
     
     const newMessage = await env.DB.prepare("SELECT * FROM messages WHERE id = ?").bind(msgId).first();
-    ctx.waitUntil(triggerPusher(env, `user-${m.receiverId}`, "chat-message", newMessage));
+    ctx.waitUntil(triggerPusher(env, `private-user-${m.receiverId}`, "chat-message", newMessage));
     
     await logApiUsage(env, 'pusher_message', 'chat_message', String(m.senderId), 1);
     
@@ -146,8 +146,8 @@ export async function handleMessageReaction(request: Request, env: Env, ctx: Exe
     // Notify both users
     const senderId = message.senderId;
     const receiverId = message.receiverId;
-    ctx.waitUntil(triggerPusher(env, `user-${senderId}`, "message-updated", updatedMessage));
-    ctx.waitUntil(triggerPusher(env, `user-${receiverId}`, "message-updated", updatedMessage));
+    ctx.waitUntil(triggerPusher(env, `private-user-${senderId}`, "message-updated", updatedMessage));
+    ctx.waitUntil(triggerPusher(env, `private-user-${receiverId}`, "message-updated", updatedMessage));
     
     return new Response(JSON.stringify(updatedMessage), { headers: corsHeaders });
 }
@@ -195,7 +195,7 @@ export async function handleForwardMessage(request: Request, env: Env, ctx: Exec
     ).run();
     
     const newMessage = await env.DB.prepare("SELECT * FROM messages WHERE id = ?").bind(msgId).first();
-    ctx.waitUntil(triggerPusher(env, `user-${receiverId}`, "chat-message", newMessage));
+    ctx.waitUntil(triggerPusher(env, `private-user-${receiverId}`, "chat-message", newMessage));
     
     return new Response(JSON.stringify(newMessage), { headers: corsHeaders });
 }
@@ -255,4 +255,29 @@ export async function handleGetConversations(myId: string, env: Env): Promise<Re
     } catch (e: any) {
         return new Response(JSON.stringify([]), { headers: corsHeaders });
     }
+}
+
+/**
+ * Mark message as delivered
+ */
+export async function handleMarkMessageDelivered(request: Request, env: Env): Promise<Response> {
+    const { messageId } = await request.json() as any;
+    await env.DB.prepare(`UPDATE messages SET delivered = 1 WHERE id = ?`).bind(messageId).run();
+    return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+}
+
+/**
+ * Mark message as seen by user
+ */
+export async function handleMarkMessageSeen(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const { messageId, userId } = await request.json() as any;
+    const message: any = await env.DB.prepare("SELECT seenBy, senderId FROM messages WHERE id = ?").bind(messageId).first();
+    let seenBy = [];
+    try { seenBy = JSON.parse(message?.seenBy || '[]'); } catch { seenBy = []; }
+    if (!seenBy.includes(userId)) seenBy.push(userId);
+    await env.DB.prepare(`UPDATE messages SET seen = 1, seenBy = ? WHERE id = ?`).bind(JSON.stringify(seenBy), messageId).run();
+    
+    const updatedMessage = await env.DB.prepare("SELECT * FROM messages WHERE id = ?").bind(messageId).first();
+    ctx.waitUntil(triggerPusher(env, `private-user-${message.senderId}`, "message-seen", { messageId, seenBy }));
+    return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
 }

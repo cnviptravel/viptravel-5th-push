@@ -13,8 +13,8 @@ import {
 // ------------------------------------------------------------------
 // BACKEND URL (Cloudflare Worker)
 // ------------------------------------------------------------------
-const API_URL = "https://viptravel-backend.erdneebatulzii23.workers.dev";
-const PUSHER_KEY = "37cb2c72dc3de4f325bb"; 
+const API_URL = import.meta.env.VITE_API_URL || "https://viptravel-backend.erdneebatulzii23.workers.dev";
+const PUSHER_KEY = import.meta.env.VITE_PUSHER_KEY || "37cb2c72dc3de4f325bb"; 
 
 const STORAGE_KEYS = {
   USERS: 'cj_travel_users',
@@ -371,7 +371,7 @@ export const apiGetAllUsers = async (): Promise<User[]> => {
     const response = await fetch(`${API_URL}/users`);
     const json = await response.json() as any;
     const data = Array.isArray(json) ? json : (json.data || json.results || []);
-    return data.map(u => parseUserData(u));
+    return data.map((u: any) => parseUserData(u));
 };
 
 export const apiUpdateUserStatus = async (userId: string, status: 'approved' | 'rejected' | 'pending'): Promise<void> => {
@@ -476,7 +476,7 @@ export const apiGetUsersByRole = async (role: UserRole): Promise<User[]> => {
     const response = await fetch(`${API_URL}/users/role/${role}`);
     const json = await response.json() as any;
     const data = Array.isArray(json) ? json : (json.data || json.results || []);
-    return data.map(u => parseUserData(u));
+    return data.map((u: any) => parseUserData(u));
 };
 
 // ==================================================================
@@ -510,16 +510,20 @@ export const apiSubscribeToMessages = (callback: () => void) => {
     if (!storedUser) return () => {};
 
     const user = JSON.parse(storedUser);
-    const pusher = new Pusher(PUSHER_KEY, { cluster: 'ap1' });
-    const channel = pusher.subscribe(`user-${user._id}`);
+    const pusher = new Pusher(PUSHER_KEY, { 
+      cluster: import.meta.env.VITE_PUSHER_CLUSTER || 'ap1',
+      authEndpoint: `${API_URL}/pusher/auth`
+    });
+    const channel = pusher.subscribe(`private-user-${user._id}`);
 
     // Зөвхөн chat-message л сонсоно — incoming-call биш (түүнд App.tsx хандална)
     channel.bind('chat-message', () => callback());
     channel.bind('message-updated', () => callback());
+    channel.bind('notification', () => callback());
 
     return () => {
         channel.unbind_all();
-        channel.unsubscribe();
+        pusher.unsubscribe(`private-user-${user._id}`);
         pusher.disconnect();
     };
 };

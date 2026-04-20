@@ -2,6 +2,7 @@ import { Env } from '../types/env';
 import { AppError } from '../errors';
 import { DatabaseService } from './database';
 import { safeJsonParse } from '../utils/response';
+import { triggerPusher } from './pusher';
 
 /**
  * User service for user management operations
@@ -216,11 +217,18 @@ export class UserService {
         // Send notification only for approved/rejected (NOT for pending)
         if (status === 'approved' || status === 'rejected') {
             const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+            const notifTime = Date.now();
             await this.db.execute(
                 `INSERT INTO notifications (id, recipientId, senderId, senderName, type, read, createdAt) 
                  VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                notifId, String(userId), 'admin', 'Admin', status, 0, Date.now()
+                notifId, String(userId), 'admin', 'Admin', status, 0, notifTime
             );
+            
+            try {
+                await triggerPusher(this.env, `private-user-${userId}`, "notification", {
+                    id: notifId, recipientId: String(userId), senderId: 'admin', senderName: 'Admin', type: status, read: false, createdAt: notifTime
+                });
+            } catch (_) {}
         }
     }
 
@@ -312,9 +320,10 @@ export class UserService {
         );
         
         if (!exists) {
+            const followTime = Date.now();
             await this.db.execute(
                 "INSERT INTO follows (followerId, followingId, createdAt) VALUES (?, ?, ?)",
-                followerId, followingId, Date.now()
+                followerId, followingId, followTime
             );
             
             // Create notification
@@ -324,8 +333,14 @@ export class UserService {
             await this.db.execute(
                 `INSERT INTO notifications (id, recipientId, senderId, senderName, type, read, createdAt) 
                  VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                notifId, followingId, followerId, follower.full_name || 'User', 'follow', 0, Date.now()
+                notifId, followingId, followerId, follower.full_name || 'User', 'follow', 0, followTime
             );
+            
+            try {
+                await triggerPusher(this.env, `private-user-${followingId}`, "notification", {
+                    id: notifId, recipientId: String(followingId), senderId: String(followerId), senderName: follower.full_name || 'User', type: 'follow', read: false, createdAt: followTime
+                });
+            } catch (_) {}
         }
     }
 

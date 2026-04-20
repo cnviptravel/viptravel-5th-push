@@ -107,17 +107,15 @@ const Profile: React.FC = () => {
 
   // Шинэ пост шуурхай profile-д нэмэх
   useEffect(() => {
-    const prev = (window as any).__onNewPost;
-    (window as any).__onNewPost = (newPost: Post) => {
-      prev?.(newPost); // Feed callback-г дуудах (Feed хуудас нэгэн зэрэг mount байвал)
+    const handleNewPost = (e: any) => {
+      const newPost = e.detail;
       if (newPost.userId === auth.user?._id) {
         setUserPosts(prevPosts => [newPost, ...prevPosts]);
       }
     };
-    return () => {
-      // Feed-ийн callback-г сэргээх
-      (window as any).__onNewPost = prev;
-    };
+    
+    document.addEventListener('new-post', handleNewPost);
+    return () => document.removeEventListener('new-post', handleNewPost);
   }, [auth.user?._id]);
 
   const loadUserPosts = async () => {
@@ -529,7 +527,7 @@ CRITICAL RULES:
                                   </div>
                               </div>
                           )}
-                          {(auth.user as any)?.hobbies && (auth.user as any).hobbies.length > 0 && auth.user.privacy?.showHobbies !== false && (
+                          {(auth.user as any)?.hobbies && (auth.user as any).hobbies.length > 0 && auth.user?.privacy?.showHobbies !== false && (
                               <div className="flex flex-col gap-0.5">
                                   <span className="text-[10px] text-slate-400 font-extrabold uppercase">Хобби</span>
                                   <div className="flex flex-wrap gap-1.5 mt-1">

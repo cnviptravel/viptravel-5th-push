@@ -28,12 +28,13 @@ const Feed: React.FC = () => {
 
   // Real-time: Pusher-р шинэ пост хүлээн авах
   useEffect(() => {
-    const pusher = new Pusher('37cb2c72dc3de4f325bb', { cluster: 'ap1' });
+    const pusher = new Pusher(import.meta.env.VITE_PUSHER_KEY as string, {
+      cluster: import.meta.env.VITE_PUSHER_CLUSTER as string
+    });
     const channel = pusher.subscribe('global-feed');
 
-    channel.bind('new-post', (newPost: Post) => {
+    const handleNewPost = (newPost: Post) => {
       setPosts(prev => {
-        // Давхардсан бол нэмэхгүй
         if (prev.some(p => p._id === newPost._id)) return prev;
         return [newPost, ...prev];
       });
@@ -45,12 +46,19 @@ const Feed: React.FC = () => {
         ...prev,
         [newPost._id]: newPost.comments || [],
       }));
-    });
+    };
+
+    channel.bind('new-post', handleNewPost);
+
+    // Мөн CustomEvent-ийг сонсох (өөрийн оруулсан постыг шууд харуулах)
+    const handleCustomNewPost = (e: any) => handleNewPost(e.detail);
+    document.addEventListener('new-post', handleCustomNewPost);
 
     return () => {
       channel.unbind_all();
       pusher.unsubscribe('global-feed');
       pusher.disconnect();
+      document.removeEventListener('new-post', handleCustomNewPost);
     };
   }, []);
 

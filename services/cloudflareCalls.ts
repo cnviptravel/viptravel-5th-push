@@ -4,6 +4,7 @@ export class CloudflareCalls {
   pc: RTCPeerConnection;
   localStream: MediaStream | null = null;
   sessionId: string | null = null;
+  isSessionStarted: boolean = false;
   private iceRestartTimer: NodeJS.Timeout | null = null;
   private connectionTimeout: NodeJS.Timeout | null = null;
 
@@ -96,6 +97,39 @@ export class CloudflareCalls {
     
     this.pc.onsignalingstatechange = () => {
       console.log('[WebRTC] Signaling state:', this.pc.signalingState);
+    };
+
+    this.pc.onnegotiationneeded = async () => {
+      if (!this.isSessionStarted || !this.sessionId) return;
+      console.log('[WebRTC] Negotiation needed, exchanging offer/answer...');
+      try {
+        const offer = await this.pc.createOffer();
+        await this.pc.setLocalDescription(offer);
+        
+        const res = await fetch(`${API_URL}/calls/${this.sessionId}/renegotiate`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            sessionDescription: { 
+              type: "offer", 
+              sdp: offer.sdp 
+            } 
+          })
+        });
+        
+        if (res.ok) {
+          const data = await res.json() as any;
+          if (data.sessionDescription?.sdp) {
+            await this.pc.setRemoteDescription(new RTCSessionDescription({
+              type: (data.sessionDescription.type || 'answer') as RTCSdpType,
+              sdp: data.sessionDescription.sdp
+            }));
+            console.log('[WebRTC] Renegotiation successful');
+          }
+        }
+      } catch (err) {
+        console.error('[WebRTC] Renegotiation failed:', err);
+      }
     };
     
     // Handle incoming ICE candidates from remote peer
@@ -386,7 +420,37 @@ export class CloudflareCalls {
       console.log('[startSession] fallback trackNames:', trackIds);
     }
 
-    return { sessionId: this.sessionId, trackIds };
+    this.isSessionStarted = true;
+    return { sessionId: this.sessionId as string, trackIds };
+  }
+
+  // Voice call-аас video руу upgrade хийх үед дуудах функц
+  async upgradeToVideo() {
+    if (!this.localStream) return;
+
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const videoTrack = videoStream.getVideoTracks()[0];
+      if (videoTrack) {
+        this.localStream.addTrack(videoTrack);
+        
+        const senders = this.pc.getSenders();
+        const videoSender = senders.find(s => s.track?.kind === 'video' || s.track === null);
+        
+        if (videoSender) {
+          await videoSender.replaceTrack(videoTrack);
+          // replaceTrack нь negotiationneeded автоматаар дууддаггүй тул гараар өдөөх
+          this.pc.dispatchEvent(new Event('negotiationneeded'));
+        } else {
+          this.pc.addTrack(videoTrack, this.localStream);
+          // addTrack нь автоматаар negotiationneeded өдөөдөг
+        }
+        
+        console.log('[upgradeToVideo] Successfully added video track and requested renegotiation');
+      }
+    } catch (err) {
+      console.error('[upgradeToVideo] Failed to acquire video:', err);
+    }
   }
 
   // Нөгөө хүний track-уудыг татах
@@ -475,6 +539,7 @@ export class CloudflareCalls {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;
     }
+    this.isSessionStarted = false;
     this.clearIceRestartTimer();
     this.clearConnectionTimeout();
     this.pc.close();

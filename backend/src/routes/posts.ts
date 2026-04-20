@@ -150,10 +150,17 @@ export async function handleAddComment(postId: string, request: Request, env: En
     // Send notification to post owner (if commenter is not the owner)
     if (post.userId && String(post.userId) !== String(userId)) {
         const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        const notifTime = Date.now();
         await env.DB.prepare(`
             INSERT INTO notifications (id, recipientId, senderId, senderName, type, postId, read, createdAt) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(notifId, String(post.userId), String(userId), userName, 'comment', postId, 0, Date.now()).run();
+        `).bind(notifId, String(post.userId), String(userId), userName, 'comment', postId, 0, notifTime).run();
+        
+        try {
+            await triggerPusher(env, `private-user-${post.userId}`, "notification", {
+                id: notifId, recipientId: String(post.userId), senderId: String(userId), senderName: userName, type: 'comment', postId, read: false, createdAt: notifTime
+            });
+        } catch (_) {}
     }
     
     return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
@@ -217,10 +224,17 @@ export async function handleLikePost(postId: string, request: Request, env: Env)
         ).bind(String(userId)).first();
         
         const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        const notifTime = Date.now();
         await env.DB.prepare(`
             INSERT INTO notifications (id, recipientId, senderId, senderName, type, postId, read, createdAt) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(notifId, String(post.userId), String(userId), user?.full_name || 'User', 'like', postId, 0, Date.now()).run();
+        `).bind(notifId, String(post.userId), String(userId), user?.full_name || 'User', 'like', postId, 0, notifTime).run();
+        
+        try {
+            await triggerPusher(env, `private-user-${post.userId}`, "notification", {
+                id: notifId, recipientId: String(post.userId), senderId: String(userId), senderName: user?.full_name || 'User', type: 'like', postId, read: false, createdAt: notifTime
+            });
+        } catch (_) {}
     }
     
     return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
@@ -325,10 +339,17 @@ export async function handleAddReview(providerId: string, request: Request, env:
     // Send review notification to the provider
     if (String(providerId) !== String(r.reviewerId)) {
         const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        const notifTime = Date.now();
         await env.DB.prepare(`
             INSERT INTO notifications (id, recipientId, senderId, senderName, type, read, createdAt) 
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(notifId, String(providerId), String(r.reviewerId), r.reviewerName || 'User', 'review', 0, Date.now()).run();
+        `).bind(notifId, String(providerId), String(r.reviewerId), r.reviewerName || 'User', 'review', 0, notifTime).run();
+        
+        try {
+            await triggerPusher(env, `private-user-${providerId}`, "notification", {
+                id: notifId, recipientId: String(providerId), senderId: String(r.reviewerId), senderName: r.reviewerName || 'User', type: 'review', read: false, createdAt: notifTime
+            });
+        } catch (_) {}
     }
     
     return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });

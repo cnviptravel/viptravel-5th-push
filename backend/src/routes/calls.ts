@@ -53,7 +53,7 @@ export async function handleInitiateCall(request: Request, env: Env, ctx: Execut
         };
 
         // Send real-time notification via Pusher
-        ctx.waitUntil(triggerPusher(env, `user-${String(receiverId)}`, "incoming-call", notification));
+        ctx.waitUntil(triggerPusher(env, `private-user-${String(receiverId)}`, "incoming-call", notification));
 
         await logApiUsage(env, 'pusher_message', 'call_signal', String(senderId), 4);
         await logApiUsage(env, 'cloudflare_calls', 'video_call_start', String(senderId), 2);
@@ -74,7 +74,7 @@ export async function handleInitiateCall(request: Request, env: Env, ctx: Execut
 export async function handleCallAccepted(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
         const { callerId } = await request.json() as any;
-        ctx.waitUntil(triggerPusher(env, `user-${String(callerId)}`, "call-accepted", { ts: Date.now() }));
+        ctx.waitUntil(triggerPusher(env, `private-user-${String(callerId)}`, "call-accepted", { ts: Date.now() }));
         return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
@@ -87,7 +87,7 @@ export async function handleCallAccepted(request: Request, env: Env, ctx: Execut
 export async function handleSendTracks(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
         const { receiverId, meetingId, senderSessionId, trackIds } = await request.json() as any;
-        ctx.waitUntil(triggerPusher(env, `user-${String(receiverId)}`, "call-tracks", {
+        ctx.waitUntil(triggerPusher(env, `private-user-${String(receiverId)}`, "call-tracks", {
             meetingId,
             senderSessionId,
             trackIds
@@ -104,7 +104,7 @@ export async function handleSendTracks(request: Request, env: Env, ctx: Executio
 export async function handleEndCall(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
         const { notifyUserId, callerId, receiverId, callType, duration, answered } = await request.json() as any;
-        ctx.waitUntil(triggerPusher(env, `user-${String(notifyUserId)}`, "call-ended", { ts: Date.now() }));
+        ctx.waitUntil(triggerPusher(env, `private-user-${String(notifyUserId)}`, "call-ended", { ts: Date.now() }));
         
         // Save call log as a chat message
         if (callerId && receiverId) {
